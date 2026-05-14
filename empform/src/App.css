@@ -66,9 +66,9 @@ body {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  align-items: center; /* Center vertically if fits */
-  justify-content: center;
-  padding: 0.75rem;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 2rem 1rem;
 }
 
 /* Remove orbs for a professional look */
@@ -85,8 +85,21 @@ body {
   box-shadow: var(--shadow-card);
 }
 
+.table-card {
+  width: 100%;
+  max-width: 95vw;
+  background: var(--card-bg);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 2rem;
+  box-shadow: var(--shadow-card);
+  margin-top: 2rem;
+  overflow-x: auto;
+}
+
 @media (max-width: 640px) {
   .form-card { padding: 1.5rem; }
+  .table-card { max-width: 100%; padding: 1rem; }
 }
 
 /* ── Header & Logo ───────────────────────────────────────── */
@@ -245,7 +258,7 @@ textarea.field-input {
 .person-row {
   grid-column: 1 / -1;
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 2fr 1fr 1fr;
   gap: 1rem;
   align-items: start;
   background-color: #f8fafc;

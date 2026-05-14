@@ -33,36 +33,7 @@ async function initSchema() {
     await pool.query(sql);
     console.log("✅  Schema applied");
     
-    // Seed branch users
-    const branches = [
-      "AARANI","ANDIMADAM","ANEKAL","ARIYALUR","ARIYANKUPPAM","ATTIBELE","ATTUR",
-      "AVALURPET","BANGARUPALAYAM","BELLARY","CHENGAM","CHITTOOR","CUDDALORE",
-      "DEVANUR","DHARAPURAM","DHARMAPURI","DINDIGUL","ELURU","GINGEE","GOWRIBIDANUR",
-      "GUDUR","HARUR","HASAN","JAMUNAMARATHUR","KALAHASTHI","KALLAKURICHI",
-      "KANDACHIPURAM","KANIYAMBADI","KARAIKAL","KRISHNAGIRI","MANDYA","MELMALAIYANUR",
-      "MIRIYALAGUDA","MOONGIL THURAIPATTU","MYSORE","NAIDUPETA","NALGONDA","NELLORE",
-      "NETTAPAKKAM","NEYVELI","ONGOLE","OTTACHATHIRAM","PALACODE","PALAMANER","PALANI",
-      "PANRUTI","PAPPREDY PATTI","PERAMBALUR","POLUR","PUTTUR","RANIPET","SANKARAPURAM",
-      "SULLURPET","SURYAPET","THALAIVASAL","THANDARAMPATTU","THENMATHIMANGALAM",
-      "THIRUKKANUR","THIRUKOVILUR","THIRUPATHI","THIRUPATHUR","THIRUTHANI","THITAKUDI",
-      "TINDIVANAM","TIRUCHI","TIRUPUR","TIRUVANNAMALAI","ULUNDURPET","UTHANGARAI",
-      "V KOTA","VEPPUR","VIJAYAWADA","VILLIANUR","VILLUPURAM","VIRUTHACHALAM"
-    ];
-
-    for (const b of branches) {
-      const email = b.toLowerCase().replace(/\s+/g, "") + "@gmail.com";
-      // Capitalize first letter for password + @2026!
-      const pass = b.charAt(0).toUpperCase() + b.slice(1).toLowerCase().replace(/\s+/g, "") + "@2026!";
-      
-      const { rows } = await pool.query("SELECT id FROM branch_users WHERE email = $1", [email]);
-      if (rows.length === 0) {
-        const hash = await bcrypt.hash(pass, 10);
-        await pool.query(
-          "INSERT INTO branch_users (email, password_hash, branch_name) VALUES ($1, $2, $3)",
-          [email, hash, b]
-        );
-      }
-    }
+    // Seeding logic removed - users and MD are already populated in DB.
   } catch (err) {
     console.error("❌  Schema error:", err.message);
     process.exit(1);
@@ -73,18 +44,33 @@ async function initSchema() {
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-const allowedOrigin = process.env.ALLOWED_ORIGIN ;
-console.log(`🔒 CORS: Allowing only origin: ${allowedOrigin}`);
+const allowedOrigins = [
+  "http://localhost:5173",
+  "http://localhost:5174",
+  "http://localhost:5175",
+  "https://empform.avgprimetech.com"
+];
 
-app.use(cors({
-  origin: [
-    "empform.avgprimetech.com",
-    "https://empform.avgprimetech.com",
-    "http://localhost:5173"
-  ],
+console.log(`🔒 CORS: Allowing only specific origins:`, allowedOrigins);
+
+const corsOptions = {
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS'), false);
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
-}));
+  credentials: true
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions)); // Explicitly handle preflight requests
+
 app.use(express.json());
 
 // ── Validation ────────────────────────────────────────────────────────────────
@@ -154,8 +140,8 @@ app.post("/api/entries", async (req, res) => {
     serial_number, entry_date, branch_name, customer_name,
     phone_number, amount_paid, payment_mode, transaction_details,
     scheme_type,
-    referred_by, referred_by_emp_id,
-    higher_official, higher_official_emp_id,
+    referred_by, referred_by_emp_id, referred_by_role,
+    higher_official, higher_official_emp_id, higher_official_role,
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
     gold_package,
@@ -166,13 +152,13 @@ app.post("/api/entries", async (req, res) => {
       serial_number, entry_date, branch_name, customer_name,
       phone_number, amount_paid, payment_mode, transaction_details,
       scheme_type,
-      referred_by, referred_by_emp_id,
-      higher_official, higher_official_emp_id,
+      referred_by, referred_by_emp_id, referred_by_role,
+      higher_official, higher_official_emp_id, higher_official_role,
       notes,
       land_kind_of_payment, land_site_name, land_site_number, land_layout,
       gold_package
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
     ) RETURNING id`;
 
   try {
@@ -180,8 +166,8 @@ app.post("/api/entries", async (req, res) => {
       serial_number || null, entry_date, branch_name, customer_name,
       phone_number, Number(amount_paid), payment_mode, transaction_details || null,
       scheme_type,
-      referred_by || null, referred_by_emp_id || null,
-      higher_official || null, higher_official_emp_id || null,
+      referred_by || null, referred_by_emp_id || null, referred_by_role || null,
+      higher_official || null, higher_official_emp_id || null, higher_official_role || null,
       notes || null,
       land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
       gold_package || null,
@@ -198,11 +184,18 @@ app.post("/api/entries", async (req, res) => {
 
 // GET /api/entries
 app.get("/api/entries", async (req, res) => {
-  const { branch, scheme, date_from, date_to } = req.query;
+  const { branch, filterBranch, scheme, date_from, date_to } = req.query;
   const conditions = ["1=1"];
   const params = [];
 
-  if (branch)    { params.push(branch);    conditions.push(`branch_name = $${params.length}`); }
+  if (branch && branch !== 'ALL') {
+    params.push(branch);
+    conditions.push(`branch_name = $${params.length}`);
+  } else if (branch === 'ALL' && filterBranch) {
+    params.push(filterBranch);
+    conditions.push(`branch_name = $${params.length}`);
+  }
+
   if (scheme)    { params.push(scheme);    conditions.push(`scheme_type = $${params.length}`); }
   if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
   if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }

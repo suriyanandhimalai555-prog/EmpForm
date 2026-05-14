@@ -146,8 +146,8 @@ const initialForm = {
   serial_number:"", entry_date:"", branch_name:"", customer_name:"",
   phone_number:"", amount_paid:"", payment_mode:"", transaction_details:"",
   scheme_type:"",
-  referred_by:"", referred_by_emp_id:"",
-  higher_official:"", higher_official_emp_id:"",
+  referred_by:"", referred_by_emp_id:"", referred_by_role:"",
+  higher_official:"", higher_official_emp_id:"", higher_official_role:"",
   notes:"",
   land_kind_of_payment:"", land_site_name:"", land_layout:"", land_site_number:"",
   gold_package:"",
@@ -188,8 +188,8 @@ function SelectInput({ label, required, options, placeholder, ...props }) {
   );
 }
 
-// A paired row: Name + Employee ID side by side
-function PersonRow({ nameLabel, nameProps, empIdProps, required }) {
+// A paired row: Name + Employee ID + Role
+function PersonRow({ nameLabel, nameProps, empIdProps, roleProps, required }) {
   return (
     <div className="person-row">
       <div className="field-group">
@@ -199,6 +199,17 @@ function PersonRow({ nameLabel, nameProps, empIdProps, required }) {
       <div className="field-group emp-id-group">
         <FieldLabel>Employee ID</FieldLabel>
         <input className="field-input emp-id-input" {...empIdProps} placeholder="EMP-XXXX" />
+      </div>
+      <div className="field-group role-group">
+        <FieldLabel>Role</FieldLabel>
+        <select className="field-input role-input" {...roleProps}>
+          <option value="">Select Role</option>
+          <option value="BM">BM</option>
+          <option value="ABM">ABM</option>
+          <option value="OA">OA</option>
+          <option value="SO">SO</option>
+          <option value="admin">admin</option>
+        </select>
       </div>
     </div>
   );
@@ -215,18 +226,23 @@ export default function CustomerEntryForm() {
   const [status, setStatus]   = useState(null);
   const [loading, setLoading] = useState(false);
   const [entries, setEntries] = useState([]);
+  const [mdFilterBranch, setMdFilterBranch] = useState("");
 
   useEffect(() => {
     if (user) {
       setForm(prev => ({ ...prev, branch_name: user.branch }));
       fetchEntries();
     }
-  }, [user]);
+  }, [user, mdFilterBranch]);
 
   const fetchEntries = async () => {
     if (!user) return;
     try {
-      const res = await fetch(`${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`);
+      let url = `${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`;
+      if (user.branch === "ALL" && mdFilterBranch) {
+        url += `&filterBranch=${encodeURIComponent(mdFilterBranch)}`;
+      }
+      const res = await fetch(url);
       const data = await res.json();
       if (data.success) setEntries(data.data);
     } catch (err) {
@@ -298,166 +314,192 @@ export default function CustomerEntryForm() {
           </div>
         </div>
 
-        {/* Status banner */}
-        {status && (
-          <div className={`status-banner ${status.type}`}>
-            <span className="status-icon">{status.type === "success" ? "✓" : "✕"}</span>
-            {status.msg}
-          </div>
-        )}
-
-        {/* ── Section 1: Basic Details ─────────────────────── */}
-        <SectionTitle icon="📋" title="Basic Details" />
-        <div className="grid-2">
-          <TextInput label="S.No" value={form.serial_number} onChange={set("serial_number")} placeholder="Auto / manual" />
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} />
-          <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
-          <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
-          <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
-          <TextInput label="Amount Paid (₹)" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
-          <SelectInput
-            label="Payment Mode" required
-            value={form.payment_mode} onChange={set("payment_mode")}
-            options={["Cash","Bank","GPay"]}
-            placeholder="Select mode"
-          />
-          <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
-          <SelectInput
-            label="Scheme Type" required
-            value={form.scheme_type} onChange={set("scheme_type")}
-            options={schemes} placeholder="Select scheme"
-          />
-        </div>
-
-        {/* ── Section 2: Reference ─────────────────────────── */}
-        <SectionTitle icon="🤝" title="Reference & Officials" />
-        <div className="grid-2">
-          <PersonRow
-            nameLabel="Referred By"
-            nameProps={{ value: form.referred_by, onChange: set("referred_by"), placeholder: "Referrer name" }}
-            empIdProps={{ value: form.referred_by_emp_id, onChange: set("referred_by_emp_id") }}
-          />
-          <PersonRow
-            nameLabel="Higher Official"
-            nameProps={{ value: form.higher_official, onChange: set("higher_official"), placeholder: "Official name" }}
-            empIdProps={{ value: form.higher_official_emp_id, onChange: set("higher_official_emp_id") }}
-          />
-        </div>
-
-        {/* Notes */}
-        <div className="field-group full-width" style={{ marginTop: "0.5rem" }}>
-          <FieldLabel>Notes</FieldLabel>
-          <textarea
-            className="field-input"
-            rows="3"
-            placeholder="Any additional remarks…"
-            value={form.notes}
-            onChange={set("notes")}
-          />
-        </div>
-
-        {/* ── Section 3: Land ──────────────────────────────── */}
-        {isLand && (
-          <div className="sub-section land-section">
-            <SectionTitle icon="🏡" title="Land Scheme Details" />
-            <div className="grid-2">
-              <SelectInput
-                label="Kind of Payment"
-                value={form.land_kind_of_payment} onChange={set("land_kind_of_payment")}
-                options={["Advance","Full"]} placeholder="Select type"
-              />
-              <SelectInput
-                label="Name of Site"
-                value={form.land_site_name} onChange={set("land_site_name")}
-                options={["Maiylam","Sunrise City","Veppur Site","SR Grand City 2","Melmalaiyanur Site","SIV City","Uchimadu"]}
-                placeholder="Select site"
-              />
-              <TextInput
-                label="Site Number"
-                value={form.land_site_number}
-                onChange={set("land_site_number")}
-                placeholder="e.g. Plot 42 / SN-007"
-              />
-              {form.land_site_name === "Veppur Site" && (
-                <SelectInput label="Veppur Layout" value={form.land_layout} onChange={set("land_layout")} options={veppurOptions} placeholder="Select layout" />
-              )}
-              {form.land_site_name === "Melmalaiyanur Site" && (
-                <SelectInput label="Melmalaiyanur Layout" value={form.land_layout} onChange={set("land_layout")} options={melmalaiyanurOpts} placeholder="Select layout" />
-              )}
+        {user.branch === "ALL" ? (
+          <div className="md-dashboard" style={{ textAlign: "center", padding: "2rem 0" }}>
+            <SectionTitle icon="👑" title="MD Dashboard" />
+            <div className="field-group" style={{ maxWidth: "300px", margin: "1rem auto", textAlign: "left" }}>
+              <FieldLabel>Filter by Branch</FieldLabel>
+              <select className="field-input" value={mdFilterBranch} onChange={(e) => setMdFilterBranch(e.target.value)}>
+                <option value="">All Branches</option>
+                {branches.map(b => <option key={b} value={b}>{b}</option>)}
+              </select>
             </div>
           </div>
-        )}
-
-        {/* ── Section 4: Gold / Jewel ──────────────────────── */}
-        {isGoldOrJewel && (
-          <div className="sub-section gold-section">
-            <SectionTitle icon="💎" title="Gold / Jewel Savings Details" />
-            <div className="grid-2">
-              <SelectInput label="Package" value={form.gold_package} onChange={set("gold_package")} options={["Single","Full"]} placeholder="Select package" />
-            </div>
-          </div>
-        )}
-
-        {/* Submit */}
-        <div className="submit-row">
-          <button className="submit-btn" onClick={handleSubmit} disabled={loading}>
-            {loading ? (
-              <><span className="spinner" /> Saving…</>
-            ) : (
-              <><span className="btn-icon">→</span> Submit Entry</>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* ── Recent Entries Table ─────────────────────────────── */}
-      <div className="form-card" style={{ marginTop: "2rem", overflowX: "auto" }}>
-        <SectionTitle icon="📊" title="Recent Entries (Your Branch)" />
-        {entries.length === 0 ? (
-          <p style={{ color: "var(--text-muted)", fontSize: "0.9rem" }}>No entries found for {user.branch} yet.</p>
         ) : (
-          <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1rem", fontSize: "0.85rem", textAlign: "left", whiteSpace: "nowrap" }}>
-            <thead>
-              <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-                <th style={{ padding: "0.5rem" }}>S.No</th>
-                <th style={{ padding: "0.5rem" }}>Date</th>
-                <th style={{ padding: "0.5rem" }}>Customer</th>
-                <th style={{ padding: "0.5rem" }}>Phone</th>
-                <th style={{ padding: "0.5rem" }}>Amount (₹)</th>
-                <th style={{ padding: "0.5rem" }}>Pay Mode</th>
-                <th style={{ padding: "0.5rem" }}>Txn Details</th>
-                <th style={{ padding: "0.5rem" }}>Scheme</th>
-                <th style={{ padding: "0.5rem" }}>Referred By</th>
-                <th style={{ padding: "0.5rem" }}>Official</th>
-                <th style={{ padding: "0.5rem" }}>Land Info</th>
-                <th style={{ padding: "0.5rem" }}>Gold Pkg</th>
-                <th style={{ padding: "0.5rem" }}>Notes</th>
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map(e => (
-                <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
-                  <td style={{ padding: "0.5rem" }}>{e.serial_number || "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>{new Date(e.entry_date).toLocaleDateString()}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.customer_name}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.phone_number}</td>
-                  <td style={{ padding: "0.5rem", color: "var(--accent-green)", fontWeight: 600 }}>{Number(e.amount_paid).toLocaleString()}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.payment_mode}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.transaction_details || "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.scheme_type}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.referred_by ? `${e.referred_by} (${e.referred_by_emp_id})` : "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.higher_official ? `${e.higher_official} (${e.higher_official_emp_id})` : "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>
-                    {e.land_kind_of_payment ? `${e.land_kind_of_payment} | ${e.land_site_name || ""} ${e.land_layout || ""} ${e.land_site_number ? `(#${e.land_site_number})` : ""}` : "-"}
-                  </td>
-                  <td style={{ padding: "0.5rem" }}>{e.gold_package || "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.notes || "-"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <>
+            {/* Status banner */}
+            {status && (
+              <div className={`status-banner ${status.type}`}>
+                <span className="status-icon">{status.type === "success" ? "✓" : "✕"}</span>
+                {status.msg}
+              </div>
+            )}
+
+            {/* ── Section 1: Basic Details ─────────────────────── */}
+            <SectionTitle icon="📋" title="Basic Details" />
+            <div className="grid-2">
+              <TextInput label="S.No" value={form.serial_number} onChange={set("serial_number")} placeholder="Auto / manual" />
+              <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} />
+              <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
+              <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
+              <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
+              <TextInput label="Amount Paid (₹)" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
+              <SelectInput
+                label="Payment Mode" required
+                value={form.payment_mode} onChange={set("payment_mode")}
+                options={["Cash","Bank","GPay"]}
+                placeholder="Select mode"
+              />
+              <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
+              <SelectInput
+                label="Scheme Type" required
+                value={form.scheme_type} onChange={set("scheme_type")}
+                options={schemes} placeholder="Select scheme"
+              />
+            </div>
+
+            {/* ── Section 2: Reference ─────────────────────────── */}
+            <SectionTitle icon="🤝" title="Reference & Officials" />
+            <div className="grid-2">
+              <PersonRow
+                nameLabel="Referred By"
+                nameProps={{ value: form.referred_by, onChange: set("referred_by"), placeholder: "Referrer name" }}
+                empIdProps={{ value: form.referred_by_emp_id, onChange: set("referred_by_emp_id") }}
+                roleProps={{ value: form.referred_by_role, onChange: set("referred_by_role") }}
+              />
+              <PersonRow
+                nameLabel="Higher Official"
+                nameProps={{ value: form.higher_official, onChange: set("higher_official"), placeholder: "Official name" }}
+                empIdProps={{ value: form.higher_official_emp_id, onChange: set("higher_official_emp_id") }}
+                roleProps={{ value: form.higher_official_role, onChange: set("higher_official_role") }}
+              />
+            </div>
+
+            {/* Notes */}
+            <div className="field-group full-width" style={{ marginTop: "0.5rem" }}>
+              <FieldLabel>Notes</FieldLabel>
+              <textarea
+                className="field-input"
+                rows="3"
+                placeholder="Any additional remarks…"
+                value={form.notes}
+                onChange={set("notes")}
+              />
+            </div>
+
+            {/* ── Section 3: Land ──────────────────────────────── */}
+            {isLand && (
+              <div className="sub-section land-section">
+                <SectionTitle icon="🏡" title="Land Scheme Details" />
+                <div className="grid-2">
+                  <SelectInput
+                    label="Kind of Payment"
+                    value={form.land_kind_of_payment} onChange={set("land_kind_of_payment")}
+                    options={["Advance","Full"]} placeholder="Select type"
+                  />
+                  <SelectInput
+                    label="Name of Site"
+                    value={form.land_site_name} onChange={set("land_site_name")}
+                    options={["Maiylam","Sunrise City","Veppur Site","SR Grand City 2","Melmalaiyanur Site","SIV City","Uchimadu"]}
+                    placeholder="Select site"
+                  />
+                  <TextInput
+                    label="Site Number"
+                    value={form.land_site_number}
+                    onChange={set("land_site_number")}
+                    placeholder="e.g. Plot 42 / SN-007"
+                  />
+                  {form.land_site_name === "Veppur Site" && (
+                    <SelectInput label="Veppur Layout" value={form.land_layout} onChange={set("land_layout")} options={veppurOptions} placeholder="Select layout" />
+                  )}
+                  {form.land_site_name === "Melmalaiyanur Site" && (
+                    <SelectInput label="Melmalaiyanur Layout" value={form.land_layout} onChange={set("land_layout")} options={melmalaiyanurOpts} placeholder="Select layout" />
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ── Section 4: Gold / Jewel ──────────────────────── */}
+            {isGoldOrJewel && (
+              <div className="sub-section gold-section">
+                <SectionTitle icon="💎" title="Gold / Jewel Savings Details" />
+                <div className="grid-2">
+                  <SelectInput label="Package" value={form.gold_package} onChange={set("gold_package")} options={["Single","Full"]} placeholder="Select package" />
+                </div>
+              </div>
+            )}
+
+            {/* Submit */}
+            <div className="submit-row">
+              <button className="submit-btn" onClick={handleSubmit} disabled={loading}>
+                {loading ? (
+                  <><span className="spinner" /> Saving…</>
+                ) : (
+                  <><span className="btn-icon">→</span> Submit Entry</>
+                )}
+              </button>
+            </div>
+          </>
         )}
       </div>
+
+      {/* ── Recent Entries Table (Full Screen) ──────────────── */}
+      <EntriesTable entries={entries} branch={user.branch === "ALL" ? (mdFilterBranch || "All Branches") : user.branch} />
+
+    </div>
+  );
+}
+
+function EntriesTable({ entries, branch }) {
+  return (
+    <div className="table-card">
+      <SectionTitle icon="📊" title={`Recent Entries (${branch})`} />
+      {entries.length === 0 ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "1rem" }}>No entries found yet.</p>
+      ) : (
+        <table style={{ width: "100%", borderCollapse: "collapse", marginTop: "1rem", fontSize: "0.85rem", textAlign: "left", whiteSpace: "nowrap" }}>
+          <thead>
+            <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
+              <th style={{ padding: "0.5rem" }}>S.No</th>
+              <th style={{ padding: "0.5rem" }}>Date</th>
+              <th style={{ padding: "0.5rem" }}>Branch</th>
+              <th style={{ padding: "0.5rem" }}>Customer</th>
+              <th style={{ padding: "0.5rem" }}>Phone</th>
+              <th style={{ padding: "0.5rem" }}>Amount (₹)</th>
+              <th style={{ padding: "0.5rem" }}>Pay Mode</th>
+              <th style={{ padding: "0.5rem" }}>Txn Details</th>
+              <th style={{ padding: "0.5rem" }}>Scheme</th>
+              <th style={{ padding: "0.5rem" }}>Referred By</th>
+              <th style={{ padding: "0.5rem" }}>Official</th>
+              <th style={{ padding: "0.5rem" }}>Land Info</th>
+              <th style={{ padding: "0.5rem" }}>Gold Pkg</th>
+              <th style={{ padding: "0.5rem" }}>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map(e => (
+              <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
+                <td style={{ padding: "0.5rem" }}>{e.serial_number || "-"}</td>
+                <td style={{ padding: "0.5rem" }}>{new Date(e.entry_date).toLocaleDateString()}</td>
+                <td style={{ padding: "0.5rem" }}>{e.branch_name}</td>
+                <td style={{ padding: "0.5rem" }}>{e.customer_name}</td>
+                <td style={{ padding: "0.5rem" }}>{e.phone_number}</td>
+                <td style={{ padding: "0.5rem", color: "var(--accent-green)", fontWeight: 600 }}>{Number(e.amount_paid).toLocaleString()}</td>
+                <td style={{ padding: "0.5rem" }}>{e.payment_mode}</td>
+                <td style={{ padding: "0.5rem" }}>{e.transaction_details || "-"}</td>
+                <td style={{ padding: "0.5rem" }}>{e.scheme_type}</td>
+                <td style={{ padding: "0.5rem" }}>{e.referred_by ? `${e.referred_by} (${e.referred_by_emp_id || ""}) - ${e.referred_by_role || "No Role"}` : "-"}</td>
+                <td style={{ padding: "0.5rem" }}>{e.higher_official ? `${e.higher_official} (${e.higher_official_emp_id || ""}) - ${e.higher_official_role || "No Role"}` : "-"}</td>
+                <td style={{ padding: "0.5rem" }}>
+                  {e.land_kind_of_payment ? `${e.land_kind_of_payment} | ${e.land_site_name || ""} ${e.land_layout || ""} ${e.land_site_number ? `(#${e.land_site_number})` : ""}` : "-"}
+                </td>
+                <td style={{ padding: "0.5rem" }}>{e.gold_package || "-"}</td>
+                <td style={{ padding: "0.5rem" }}>{e.notes || "-"}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }

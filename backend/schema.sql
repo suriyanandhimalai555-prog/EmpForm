@@ -21,10 +21,12 @@ CREATE TABLE IF NOT EXISTS customer_entries (
   -- Referred By
   referred_by             TEXT,
   referred_by_emp_id      TEXT,
+  referred_by_role        TEXT,
 
   -- Higher Official
   higher_official         TEXT,
   higher_official_emp_id  TEXT,
+  higher_official_role    TEXT,
 
   notes                   TEXT,
 
@@ -53,9 +55,23 @@ BEGIN
 
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='referred_by_role'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN referred_by_role TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
     WHERE table_name='customer_entries' AND column_name='higher_official_emp_id'
   ) THEN
     ALTER TABLE customer_entries ADD COLUMN higher_official_emp_id TEXT;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='higher_official_role'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN higher_official_role TEXT;
   END IF;
 
   IF NOT EXISTS (
