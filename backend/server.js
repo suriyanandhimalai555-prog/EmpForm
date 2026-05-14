@@ -44,10 +44,23 @@ async function initSchema() {
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-console.log(`🔓 CORS: Allowing ALL origins`);
+const allowedOrigins = [
+  "https://empform.avgprimetech.com"
+];
+
+console.log(`🔒 CORS: Allowing only specific origins:`, allowedOrigins);
 
 const corsOptions = {
-  origin: true,
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like mobile apps or curl requests)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    
+    return callback(new Error('Not allowed by CORS'), false);
+  },
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true
 };
