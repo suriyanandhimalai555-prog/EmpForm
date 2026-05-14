@@ -78,6 +78,7 @@ console.log(`🔒 CORS: Allowing only origin: ${allowedOrigin}`);
 
 app.use(cors({
   origin: [
+    "empform.avgprimetech.com",
     "https://empform.avgprimetech.com",
     "http://localhost:5173"
   ],
