@@ -41,40 +41,20 @@ async function initSchema() {
 }
 
 // ── Express ───────────────────────────────────────────────────────────────────
-// ── Express ───────────────────────────────────────────────────────────────────
 const app = express();
-const PORT = process.env.PORT || 5000;
 
-// Allowed frontend domains
 const allowedOrigins = [
+  "https://empform.avgprimetech.com",
   "http://localhost:5173",
   "http://localhost:5174",
-  "http://localhost:5175",
-  "https://empform.avgprimetech.com"
+  "http://localhost:5175"
 ];
 
-// Proper CORS configuration
 app.use(cors({
-  origin: function(origin, callback) {
-
-    // allow requests without origin
-    if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error("CORS not allowed"));
-    }
-  },
-
+  origin: allowedOrigins,
+  credentials: true,
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-
-  allowedHeaders: [
-    "Content-Type",
-    "Authorization"
-  ],
-
-  credentials: true
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 
 // IMPORTANT
