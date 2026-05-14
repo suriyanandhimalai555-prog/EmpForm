@@ -73,13 +73,16 @@ async function initSchema() {
 const app  = express();
 const PORT = process.env.PORT || 5000;
 
-const allowedOrigin = process.env.ALLOWED_ORIGIN;
+const allowedOrigin = process.env.ALLOWED_ORIGIN ;
 console.log(`🔒 CORS: Allowing only origin: ${allowedOrigin}`);
 
 app.use(cors({
-  origin: allowedOrigin,
-  methods: ["GET", "POST", "PUT", "DELETE"],
-  credentials: true
+  origin: [
+    "https://empform.avgprimetech.com",
+    "http://localhost:5173"
+  ],
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
 }));
 app.use(express.json());
 
