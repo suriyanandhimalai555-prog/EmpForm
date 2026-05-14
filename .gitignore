@@ -3,6 +3,7 @@ backend/node_modules
 
 # Environment variables
 .env
+backend/.env
 .env.local
 .env.*.local
 *.env
