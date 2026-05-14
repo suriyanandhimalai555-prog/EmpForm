@@ -1,5 +1,11 @@
 empform/node_modules
 backend/node_modules
+dist
+.DS_Store
+**/.DS_Store
+*.db
+*.db-shm
+*.db-wal
 
 # Environment variables
 .env

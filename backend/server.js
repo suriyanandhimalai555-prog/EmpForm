@@ -45,7 +45,8 @@ const app  = express();
 const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = [
-  "https://empform.avgprimetech.com"
+  "https://empform.avgprimetech.com",
+  "http://localhost:5173"
 ];
 
 console.log(`🔒 CORS: Allowing only specific origins:`, allowedOrigins);
@@ -95,8 +96,8 @@ app.post("/api/login", async (req, res) => {
     const match = await bcrypt.compare(password, user.password_hash);
     if (!match) return res.status(401).json({ success: false, error: "Invalid email or password" });
     
-    const token = jwt.sign({ id: user.id, branch: user.branch_name, email: user.email }, JWT_SECRET, { expiresIn: '1d' });
-    return res.json({ success: true, token, branch: user.branch_name, email: user.email });
+    const token = jwt.sign({ id: user.id, branch: user.branch_name.toUpperCase(), email: user.email }, JWT_SECRET, { expiresIn: '1d' });
+    return res.json({ success: true, token, branch: user.branch_name.toUpperCase(), email: user.email });
   } catch(e) {
     console.error("Login error:", e.message);
     res.status(500).json({ success: false, error: "Server error" });
@@ -160,7 +161,7 @@ app.post("/api/entries", async (req, res) => {
 
   try {
     const result = await pool.query(sql, [
-      serial_number || null, entry_date, branch_name, customer_name,
+      serial_number || null, entry_date, branch_name ? branch_name.toUpperCase() : branch_name, customer_name,
       phone_number, Number(amount_paid), payment_mode, transaction_details || null,
       scheme_type,
       referred_by || null, referred_by_emp_id || null, referred_by_role || null,
@@ -186,11 +187,11 @@ app.get("/api/entries", async (req, res) => {
   const params = [];
 
   if (branch && branch !== 'ALL') {
-    params.push(branch);
-    conditions.push(`branch_name = $${params.length}`);
+    params.push(branch.toUpperCase());
+    conditions.push(`UPPER(branch_name) = $${params.length}`);
   } else if (branch === 'ALL' && filterBranch) {
-    params.push(filterBranch);
-    conditions.push(`branch_name = $${params.length}`);
+    params.push(filterBranch.toUpperCase());
+    conditions.push(`UPPER(branch_name) = $${params.length}`);
   }
 
   if (scheme)    { params.push(scheme);    conditions.push(`scheme_type = $${params.length}`); }
