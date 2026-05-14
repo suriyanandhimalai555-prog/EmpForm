@@ -41,9 +41,11 @@ async function initSchema() {
 }
 
 // ── Express ───────────────────────────────────────────────────────────────────
-const app  = express();
+// ── Express ───────────────────────────────────────────────────────────────────
+const app = express();
 const PORT = process.env.PORT || 5000;
 
+// Allowed frontend domains
 const allowedOrigins = [
   "http://localhost:5173",
   "http://localhost:5174",
@@ -51,25 +53,32 @@ const allowedOrigins = [
   "https://empform.avgprimetech.com"
 ];
 
-console.log(`🔒 CORS: Allowing only specific origins:`, allowedOrigins);
+// Proper CORS configuration
+app.use(cors({
+  origin: function(origin, callback) {
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps or curl requests)
+    // allow requests without origin
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    
-    return callback(new Error('Not allowed by CORS'), false);
-  },
-  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-  credentials: true
-};
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions)); // Explicitly handle preflight requests
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error("CORS not allowed"));
+    }
+  },
+
+  methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+
+  allowedHeaders: [
+    "Content-Type",
+    "Authorization"
+  ],
+
+  credentials: true
+}));
+
+// IMPORTANT
+app.options("*", cors());
 
 app.use(express.json());
 
