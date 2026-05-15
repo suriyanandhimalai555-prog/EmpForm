@@ -835,6 +835,167 @@ textarea.field-input {
   white-space: nowrap;
 }
 
+/* ============================================================
+   Branch Employee Stats Section
+   ============================================================ */
+
+.branch-stats {
+  width: 100%;
+  max-width: 95vw;
+  background: var(--card-bg);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255,255,255,0.4);
+  border-radius: var(--radius-xl);
+  padding: 1.5rem 2.5rem;
+  box-shadow: var(--shadow-card);
+  margin-top: 2.5rem;
+}
+
+.branch-stats-header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  margin-bottom: 0.85rem;
+}
+.branch-stats-title {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+.branch-stats-sub {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+/* KPI mini cards */
+.bkpi-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.65rem;
+  margin-bottom: 1rem;
+}
+
+.bkpi-card {
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-light);
+  border-left: 3px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.bkpi-card:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(0,0,0,0.07);
+}
+
+.bkpi-blue   { border-left-color: #2563eb; background: #f8fbff; }
+.bkpi-green  { border-left-color: #059669; background: #f4fdf8; }
+.bkpi-purple { border-left-color: #7c3aed; background: #faf8ff; }
+.bkpi-orange { border-left-color: #d97706; background: #fffdf5; }
+
+.bkpi-icon {
+  font-size: 1rem;
+  margin-bottom: 0.1rem;
+}
+.bkpi-value {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--text-primary);
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+.bkpi-label {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+
+/* Scheme breakdown */
+.bscheme-section {
+  background: #f8fafc;
+  border-radius: var(--radius-md);
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--border-light);
+}
+.bscheme-title {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 0.55rem;
+}
+.bscheme-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+.bscheme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.78rem;
+}
+.bscheme-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bscheme-name {
+  flex: 1;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bscheme-count-pill {
+  font-size: 0.66rem;
+  color: var(--text-muted);
+  background: #e2e8f0;
+  padding: 0.05rem 0.35rem;
+  border-radius: 10px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.bscheme-bar-track {
+  width: 80px;
+  height: 4px;
+  background: #e2e8f0;
+  border-radius: 2px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.bscheme-bar-fill {
+  height: 100%;
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+.bscheme-pct {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  min-width: 28px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.bscheme-amt {
+  font-weight: 700;
+  color: var(--text-primary);
+  min-width: 80px;
+  text-align: right;
+  flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .bkpi-grid { grid-template-columns: 1fr 1fr; }
+  .bscheme-bar-track { display: none; }
+  .bscheme-pct { display: none; }
+}
+
 /* ── Responsive ───────────────────────────────────────────── */
 @media (max-width: 1100px) {
   .kpi-grid     { grid-template-columns: repeat(2, 1fr); }
@@ -846,6 +1007,25 @@ textarea.field-input {
   .admin-brand   { display: none; }
   .kpi-grid      { grid-template-columns: 1fr 1fr; gap: 0.6rem; }
   .kpi-value     { font-size: 1.2rem; }
-  .admin-filter-bar { flex-direction: column; align-items: stretch; }
-  .admin-filter-controls { flex-direction: column; }
+
+  .admin-filter-bar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    padding: 1rem;
+  }
+  .admin-filter-controls {
+    flex-direction: column;
+    width: 100%;
+    gap: 0.6rem;
+  }
+  .admin-filter-controls .field-group {
+    width: 100% !important;
+    min-width: 0 !important;
+    flex: none !important;
+  }
+  .admin-clear-btn {
+    width: 100%;
+    text-align: center;
+  }
 }

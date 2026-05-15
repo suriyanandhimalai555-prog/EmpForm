@@ -517,6 +517,94 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   );
 }
 
+// ── Branch Stats ─────────────────────────────────────────────────────────────
+function BranchStats({ entries }) {
+  const now          = new Date();
+  const today        = now.toISOString().split("T")[0];
+  const currentMonth = now.getMonth();
+  const currentYear  = now.getFullYear();
+  const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
+
+  const totalEntries    = entries.length;
+  const totalRevenue    = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+
+  const todayEntries    = entries.filter(e => new Date(e.entry_date).toISOString().split("T")[0] === today);
+  const todayRevenue    = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+  const todayCount      = todayEntries.length;
+
+  const thisMonthRevenue = entries
+    .filter(e => { const d = new Date(e.entry_date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
+    .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+
+  const revenueByScheme = {};
+  const countByScheme   = {};
+  entries.forEach(e => {
+    const amt = Number(e.amount_paid) || 0;
+    revenueByScheme[e.scheme_type] = (revenueByScheme[e.scheme_type] || 0) + amt;
+    countByScheme[e.scheme_type]   = (countByScheme[e.scheme_type]   || 0) + 1;
+  });
+
+  if (totalEntries === 0) return null;
+
+  return (
+    <div className="branch-stats">
+      <div className="branch-stats-header">
+        <span className="branch-stats-title">📊 Branch Overview</span>
+        <span className="branch-stats-sub">Your branch statistics</span>
+      </div>
+
+      <div className="bkpi-grid">
+        <div className="bkpi-card bkpi-blue">
+          <div className="bkpi-icon">📋</div>
+          <div className="bkpi-value">{totalEntries.toLocaleString()}</div>
+          <div className="bkpi-label">Total Entries</div>
+        </div>
+        <div className="bkpi-card bkpi-green">
+          <div className="bkpi-icon">💰</div>
+          <div className="bkpi-value">₹{totalRevenue.toLocaleString()}</div>
+          <div className="bkpi-label">Total Revenue</div>
+        </div>
+        <div className="bkpi-card bkpi-purple">
+          <div className="bkpi-icon">📅</div>
+          <div className="bkpi-value">₹{thisMonthRevenue.toLocaleString()}</div>
+          <div className="bkpi-label">{monthName}</div>
+        </div>
+        <div className="bkpi-card bkpi-orange">
+          <div className="bkpi-icon">⚡</div>
+          <div className="bkpi-value">₹{todayRevenue.toLocaleString()}</div>
+          <div className="bkpi-label">Today · {todayCount} {todayCount === 1 ? "entry" : "entries"}</div>
+        </div>
+      </div>
+
+      {Object.keys(revenueByScheme).length > 0 && (
+        <div className="bscheme-section">
+          <div className="bscheme-title">Revenue by Scheme</div>
+          <div className="bscheme-list">
+            {Object.entries(revenueByScheme)
+              .sort(([, a], [, b]) => b - a)
+              .map(([scheme, total]) => {
+                const color = SCHEME_COLORS[scheme] || "#6b7280";
+                const pct   = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
+                return (
+                  <div key={scheme} className="bscheme-row">
+                    <span className="bscheme-dot" style={{ background: color }} />
+                    <span className="bscheme-name">{scheme}</span>
+                    <span className="bscheme-count-pill">{countByScheme[scheme]}</span>
+                    <div className="bscheme-bar-track">
+                      <div className="bscheme-bar-fill" style={{ width:`${pct}%`, background: color }} />
+                    </div>
+                    <span className="bscheme-pct">{pct}%</span>
+                    <span className="bscheme-amt">₹{total.toLocaleString()}</span>
+                  </div>
+                );
+              })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
 function EntriesTable({ entries, branch, onExport }) {
   return (
@@ -779,6 +867,7 @@ export default function CustomerEntryForm() {
         </div>
       </div>
 
+      <BranchStats entries={entries} />
       <EntriesTable entries={entries} branch={user.branch} onExport={() => exportToCSV(entries)} />
     </div>
   );
