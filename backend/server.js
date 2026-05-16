@@ -7,7 +7,8 @@ require("dotenv").config();
 
 const express   = require("express");
 const cors      = require("cors");
-const { Pool }  = require("pg");
+const { Pool, types }  = require("pg");
+types.setTypeParser(1082, val => val); // Return DATE as raw "YYYY-MM-DD" string (prevents timezone shift)
 const fs        = require("fs");
 const path      = require("path");
 const bcrypt    = require("bcryptjs");
@@ -166,22 +167,22 @@ app.post("/api/entries", async (req, res) => {
   try {
     await client.query("BEGIN");
 
-    // Advisory lock scoped to (branch, today) — serial number is always based
-    // on the actual submission date (CURRENT_DATE), never the form's entry_date.
+    // Advisory lock scoped to (branch, entry_date) — serial number is based
+    // on the form's entry_date so each date has its own sequence.
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtext($1))",
-      [`${normalizedBranch}:${new Date().toLocaleDateString("en-CA")}`]
+      [`${normalizedBranch}:${entry_date}`]
     );
 
-    // Serial number counts entries submitted today (created_at::date = CURRENT_DATE),
-    // regardless of what entry_date the staff selected in the form.
+    // Serial number counts entries for the same branch + entry_date,
+    // so viewing by form date shows unique serial numbers.
     const { rows: snRows } = await client.query(
       `SELECT COALESCE(MAX(
          CASE WHEN serial_number ~ '^[0-9]+$' THEN serial_number::integer ELSE 0 END
        ), 0) + 1 AS next_sn
        FROM customer_entries
-       WHERE branch_name = $1 AND created_at::date = CURRENT_DATE`,
-      [normalizedBranch]
+       WHERE branch_name = $1 AND entry_date = $2`,
+      [normalizedBranch, entry_date]
     );
     const nextSerial = String(snRows[0].next_sn);
 
@@ -227,10 +228,10 @@ app.get("/api/entries", async (req, res) => {
   }
 
   if (scheme)    { params.push(scheme);    conditions.push(`scheme_type = $${params.length}`); }
-  if (date_from) { params.push(date_from); conditions.push(`created_at::date >= $${params.length}`); }
-  if (date_to)   { params.push(date_to);   conditions.push(`created_at::date <= $${params.length}`); }
+  if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
+  if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }
 
-  const sql = `SELECT * FROM customer_entries WHERE ${conditions.join(" AND ")} ORDER BY created_at ASC`;
+  const sql = `SELECT * FROM customer_entries WHERE ${conditions.join(" AND ")} ORDER BY entry_date ASC, created_at ASC`;
   try {
     const result = await pool.query(sql, params);
     return res.json({ success: true, count: result.rowCount, data: result.rows });

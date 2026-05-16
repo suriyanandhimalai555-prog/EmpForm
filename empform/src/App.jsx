@@ -229,15 +229,14 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   const totalEntries = entries.length;
   const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
-  // Use created_at (actual submission time) for "today", not entry_date (form date)
-  const todayEntries = entries.filter(e =>
-    new Date(e.created_at).toLocaleDateString("en-CA") === today
-  );
+  // Filter by entry_date (form date) for all dashboard stats
+  const todayEntries = entries.filter(e => String(e.entry_date).slice(0,10) === today);
   const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount   = todayEntries.length;
 
+  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
   const thisMonthRevenue = entries
-    .filter(e => { const d = new Date(e.created_at); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
+    .filter(e => String(e.entry_date).slice(0,7) === currentMonthKey)
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -255,7 +254,6 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   });
 
   const uniqueBranchCount  = new Set(entries.map(e => e.branch_name).filter(Boolean)).size;
-  const avgEntry           = totalEntries > 0 ? Math.round(totalRevenue / totalEntries) : 0;
   const schemeCount        = Object.keys(revenueByScheme).length;
 
   const clearFilters = () => { setMdFilterBranch(""); setMdFilterDateFrom(""); setMdFilterDateTo(""); };
@@ -401,10 +399,6 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                 <span className="overview-value">{schemeCount}</span>
               </div>
               <div className="overview-row">
-                <span className="overview-label">Avg. Entry Value</span>
-                <span className="overview-value">₹{avgEntry.toLocaleString()}</span>
-              </div>
-              <div className="overview-row">
                 <span className="overview-label">Entries Today</span>
                 <span className="overview-value">{todayCount}</span>
               </div>
@@ -522,7 +516,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
 }
 
 // ── Branch Stats ─────────────────────────────────────────────────────────────
-function BranchStats({ entries }) {
+function BranchStats({ entries, filterDate }) {
   const now          = new Date();
   const today        = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
   const currentMonth = now.getMonth();
@@ -532,13 +526,16 @@ function BranchStats({ entries }) {
   const totalEntries    = entries.length;
   const totalRevenue    = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
-  // Use created_at (actual submission time) for "today", not entry_date (form date)
-  const todayEntries    = entries.filter(e => new Date(e.created_at).toLocaleDateString("en-CA") === today);
-  const todayRevenue    = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayCount      = todayEntries.length;
+  // Use filterDate from EntriesTable if provided, else fall back to today
+  const selectedDate    = filterDate || today;
+  const isToday         = selectedDate === today;
+  const selectedEntries = entries.filter(e => String(e.entry_date).slice(0,10) === selectedDate);
+  const todayRevenue    = selectedEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+  const todayCount      = selectedEntries.length;
 
+  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
   const thisMonthRevenue = entries
-    .filter(e => { const d = new Date(e.created_at); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
+    .filter(e => String(e.entry_date).slice(0,7) === currentMonthKey)
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -577,7 +574,7 @@ function BranchStats({ entries }) {
         <div className="bkpi-card bkpi-orange">
           <div className="bkpi-icon">⚡</div>
           <div className="bkpi-value">₹{todayRevenue.toLocaleString()}</div>
-          <div className="bkpi-label">Today · {todayCount} {todayCount === 1 ? "entry" : "entries"}</div>
+          <div className="bkpi-label">{isToday ? "Today" : selectedDate} · {todayCount} {todayCount === 1 ? "entry" : "entries"}</div>
         </div>
       </div>
 
@@ -611,13 +608,11 @@ function BranchStats({ entries }) {
 }
 
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
-function EntriesTable({ entries, branch }) {
-  const todayIso = new Date().toISOString().split("T")[0];
-  const [filterDate, setFilterDate] = useState(todayIso);
+function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
+  const todayLocal = new Date().toLocaleDateString("en-CA");
 
-  // Filter by created_at (actual submission date), not entry_date (form date)
   const filtered = filterDate
-    ? entries.filter(e => new Date(e.created_at).toLocaleDateString("en-CA") === filterDate)
+    ? entries.filter(e => String(e.entry_date).slice(0,10) === filterDate)
     : entries;
 
   return (
@@ -632,7 +627,7 @@ function EntriesTable({ entries, branch }) {
       </div>
 
       {/* Date filter */}
-      <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", marginBottom:"1rem" }}>
+      <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", marginBottom:"1rem", flexWrap:"wrap" }}>
         <label style={{ fontSize:"0.85rem", fontWeight:600, color:"var(--text-muted)", whiteSpace:"nowrap" }}>View Date:</label>
         <input
           type="date"
@@ -641,9 +636,9 @@ function EntriesTable({ entries, branch }) {
           onChange={e => setFilterDate(e.target.value)}
           style={{ maxWidth:"180px" }}
         />
-        {filterDate !== todayIso && (
+        {filterDate !== todayLocal && (
           <button
-            onClick={() => setFilterDate(todayIso)}
+            onClick={() => setFilterDate(todayLocal)}
             style={{ background:"none", border:"1px solid var(--border-light)", borderRadius:"6px", padding:"0.3rem 0.7rem", cursor:"pointer", fontSize:"0.8rem", color:"var(--text-muted)" }}
           >
             Back to Today
@@ -668,10 +663,21 @@ function EntriesTable({ entries, branch }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(e => (
+            {filtered.map(e => {
+              const entryDateStr   = String(e.entry_date).slice(0,10);
+              const createdDateStr = new Date(e.created_at).toLocaleDateString("en-CA");
+              const createdLater   = createdDateStr > entryDateStr;
+              return (
               <tr key={e.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
                 <td style={{ padding:"0.5rem" }}>{e.serial_number||"-"}</td>
-                <td style={{ padding:"0.5rem" }}>{formatDateToDDMMYYYY(e.entry_date)}</td>
+                <td style={{ padding:"0.5rem" }}>
+                  {formatDateToDDMMYYYY(e.entry_date)}
+                  {createdLater && (
+                    <div style={{ fontSize:"0.72rem", color:"#d97706", marginTop:"2px", whiteSpace:"normal", lineHeight:1.3 }}>
+                      Created on {formatDateToDDMMYYYY(createdDateStr)}
+                    </div>
+                  )}
+                </td>
                 <td style={{ padding:"0.5rem" }}>{e.branch_name}</td>
                 <td style={{ padding:"0.5rem" }}>{e.customer_name}</td>
                 <td style={{ padding:"0.5rem" }}>{e.phone_number}</td>
@@ -685,7 +691,8 @@ function EntriesTable({ entries, branch }) {
                 <td style={{ padding:"0.5rem" }}>{e.gold_package||"-"}</td>
                 <td style={{ padding:"0.5rem" }}>{e.notes||"-"}</td>
               </tr>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       )}
@@ -721,6 +728,7 @@ export default function CustomerEntryForm() {
   const [mdFilterBranch,  setMdFilterBranch]  = useState("");
   const [mdFilterDateFrom,setMdFilterDateFrom]= useState("");
   const [mdFilterDateTo,  setMdFilterDateTo]  = useState("");
+  const [filterDate,      setFilterDate]      = useState(new Date().toLocaleDateString("en-CA"));
 
   // Sync form branch when user changes (login / logout)
   useEffect(() => {
@@ -770,7 +778,7 @@ export default function CustomerEntryForm() {
       });
       const data = await res.json();
       if (data.success) {
-        setStatus({ type:"success", msg:`Entry saved! S.No ${data.serial_number} for today.` });
+        setStatus({ type:"success", msg:`Entry saved! S.No ${data.serial_number}` });
         setForm({ ...initialForm, entry_date: todayISO(), branch_name: user.branch });
         window.scrollTo({ top:0, behavior:"smooth" });
         // Re-trigger fetch by touching a dummy flag — actually just call directly
@@ -834,7 +842,7 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} />
+          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} max={todayISO()} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
@@ -907,8 +915,8 @@ export default function CustomerEntryForm() {
         </div>
       </div>
 
-      <BranchStats entries={entries} />
-      <EntriesTable entries={entries} branch={user.branch} />
+      <BranchStats entries={entries} filterDate={filterDate} />
+      <EntriesTable entries={entries} branch={user.branch} filterDate={filterDate} setFilterDate={setFilterDate} />
     </div>
   );
 }
