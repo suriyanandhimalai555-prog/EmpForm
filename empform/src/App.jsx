@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import { useState, useEffect } from "react";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -65,7 +65,11 @@ const exportToCSV = (entries) => {
     e.land_kind_of_payment||"", e.land_site_name||"", e.land_layout||"", e.land_site_number||"",
     e.gold_package||"", (e.notes||"").replace(/,/g," "),
   ]);
-  const csv = [headers.join(","), ...rows.map(r => r.map(v => `"${v}"`).join(","))].join("\n");
+  // Wrap date column (index 1) as Excel text formula ="DD/MM/YYYY" to prevent auto-formatting
+  const csv = [
+    headers.join(","),
+    ...rows.map(r => r.map((v, i) => i === 1 ? `"=""${v}"""` : `"${v}"`).join(",")),
+  ].join("\n");
   const blob = new Blob([csv], { type:"text/csv;charset=utf-8;" });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
@@ -215,7 +219,7 @@ function SectionTitle({ icon, title }) {
 // ── MD Dashboard ──────────────────────────────────────────────────────────────
 function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdFilterDateFrom, setMdFilterDateFrom, mdFilterDateTo, setMdFilterDateTo }) {
   const now          = new Date();
-  const today        = now.toISOString().split("T")[0];
+  const today        = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
   const currentMonth = now.getMonth();
   const currentYear  = now.getFullYear();
   const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
@@ -225,15 +229,15 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   const totalEntries = entries.length;
   const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
-  const todayEntries = entries.filter(e => {
-    const d = new Date(e.entry_date);
-    return d.toISOString().split("T")[0] === today;
-  });
+  // Use created_at (actual submission time) for "today", not entry_date (form date)
+  const todayEntries = entries.filter(e =>
+    new Date(e.created_at).toLocaleDateString("en-CA") === today
+  );
   const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount   = todayEntries.length;
 
   const thisMonthRevenue = entries
-    .filter(e => { const d = new Date(e.entry_date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
+    .filter(e => { const d = new Date(e.created_at); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -520,7 +524,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
 // ── Branch Stats ─────────────────────────────────────────────────────────────
 function BranchStats({ entries }) {
   const now          = new Date();
-  const today        = now.toISOString().split("T")[0];
+  const today        = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
   const currentMonth = now.getMonth();
   const currentYear  = now.getFullYear();
   const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
@@ -528,12 +532,13 @@ function BranchStats({ entries }) {
   const totalEntries    = entries.length;
   const totalRevenue    = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
-  const todayEntries    = entries.filter(e => new Date(e.entry_date).toISOString().split("T")[0] === today);
+  // Use created_at (actual submission time) for "today", not entry_date (form date)
+  const todayEntries    = entries.filter(e => new Date(e.created_at).toLocaleDateString("en-CA") === today);
   const todayRevenue    = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount      = todayEntries.length;
 
   const thisMonthRevenue = entries
-    .filter(e => { const d = new Date(e.entry_date); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
+    .filter(e => { const d = new Date(e.created_at); return d.getMonth() === currentMonth && d.getFullYear() === currentYear; })
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -606,19 +611,53 @@ function BranchStats({ entries }) {
 }
 
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
-function EntriesTable({ entries, branch, onExport }) {
+function EntriesTable({ entries, branch }) {
+  const todayIso = new Date().toISOString().split("T")[0];
+  const [filterDate, setFilterDate] = useState(todayIso);
+
+  // Filter by created_at (actual submission date), not entry_date (form date)
+  const filtered = filterDate
+    ? entries.filter(e => new Date(e.created_at).toLocaleDateString("en-CA") === filterDate)
+    : entries;
+
   return (
     <div className="table-card">
       <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:"1rem" }}>
         <SectionTitle icon="📊" title={`Recent Entries (${branch})`} />
-        {entries.length > 0 && (
-          <button onClick={onExport} style={{ background:"var(--accent-green)", color:"white", border:"none", padding:"0.5rem 1rem", borderRadius:"6px", cursor:"pointer", fontWeight:"600", fontSize:"0.9rem" }}>
+        {filtered.length > 0 && (
+          <button onClick={() => exportToCSV(filtered)} style={{ background:"var(--accent-green)", color:"white", border:"none", padding:"0.5rem 1rem", borderRadius:"6px", cursor:"pointer", fontWeight:"600", fontSize:"0.9rem" }}>
             📥 Export to Excel
           </button>
         )}
       </div>
+
+      {/* Date filter */}
+      <div style={{ display:"flex", alignItems:"center", gap:"0.75rem", marginBottom:"1rem" }}>
+        <label style={{ fontSize:"0.85rem", fontWeight:600, color:"var(--text-muted)", whiteSpace:"nowrap" }}>View Date:</label>
+        <input
+          type="date"
+          className="field-input"
+          value={filterDate}
+          onChange={e => setFilterDate(e.target.value)}
+          style={{ maxWidth:"180px" }}
+        />
+        {filterDate !== todayIso && (
+          <button
+            onClick={() => setFilterDate(todayIso)}
+            style={{ background:"none", border:"1px solid var(--border-light)", borderRadius:"6px", padding:"0.3rem 0.7rem", cursor:"pointer", fontSize:"0.8rem", color:"var(--text-muted)" }}
+          >
+            Back to Today
+          </button>
+        )}
+        <span style={{ fontSize:"0.82rem", color:"var(--text-muted)" }}>
+          {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
+        </span>
+      </div>
+
       {entries.length === 0 ? (
         <p style={{ color:"var(--text-muted)", fontSize:"0.9rem", marginTop:"1rem" }}>No entries found yet.</p>
+      ) : filtered.length === 0 ? (
+        <p style={{ color:"var(--text-muted)", fontSize:"0.9rem", marginTop:"1rem" }}>No entries for this date.</p>
       ) : (
         <table style={{ width:"100%", borderCollapse:"collapse", marginTop:"1rem", fontSize:"0.85rem", textAlign:"left", whiteSpace:"nowrap" }}>
           <thead>
@@ -629,7 +668,7 @@ function EntriesTable({ entries, branch, onExport }) {
             </tr>
           </thead>
           <tbody>
-            {entries.map(e => (
+            {filtered.map(e => (
               <tr key={e.id} style={{ borderBottom:"1px solid #f3f4f6" }}>
                 <td style={{ padding:"0.5rem" }}>{e.serial_number||"-"}</td>
                 <td style={{ padding:"0.5rem" }}>{formatDateToDDMMYYYY(e.entry_date)}</td>
@@ -655,8 +694,10 @@ function EntriesTable({ entries, branch, onExport }) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
+const todayISO = () => new Date().toISOString().split("T")[0];
+
 const initialForm = {
-  serial_number:"", entry_date:"", branch_name:"", customer_name:"",
+  entry_date: todayISO(), branch_name:"", customer_name:"",
   phone_number:"", amount_paid:"", payment_mode:"", transaction_details:"",
   scheme_type:"",
   referred_by:"", referred_by_emp_id:"", referred_by_role:"",
@@ -729,8 +770,8 @@ export default function CustomerEntryForm() {
       });
       const data = await res.json();
       if (data.success) {
-        setStatus({ type:"success", msg:`Entry saved! (ID #${data.id})` });
-        setForm({ ...initialForm, branch_name: user.branch });
+        setStatus({ type:"success", msg:`Entry saved! S.No ${data.serial_number} for today.` });
+        setForm({ ...initialForm, entry_date: todayISO(), branch_name: user.branch });
         window.scrollTo({ top:0, behavior:"smooth" });
         // Re-trigger fetch by touching a dummy flag — actually just call directly
         const url = `${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`;
@@ -793,7 +834,6 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="S.No" value={form.serial_number} onChange={set("serial_number")} placeholder="Auto / manual" />
           <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
@@ -868,7 +908,7 @@ export default function CustomerEntryForm() {
       </div>
 
       <BranchStats entries={entries} />
-      <EntriesTable entries={entries} branch={user.branch} onExport={() => exportToCSV(entries)} />
+      <EntriesTable entries={entries} branch={user.branch} />
     </div>
   );
 }
