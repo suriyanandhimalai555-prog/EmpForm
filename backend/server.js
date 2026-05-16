@@ -46,7 +46,8 @@ const PORT = process.env.PORT || 5000;
 
 const allowedOrigins = [
   "https://empform.avgprimetech.com",
-  "http://localhost:5173"
+  "http://localhost:5173",
+  "http://localhost:5174"
 ];
 
 console.log(`🔒 CORS: Allowing only specific origins:`, allowedOrigins);
@@ -135,7 +136,7 @@ app.post("/api/entries", async (req, res) => {
   if (err) return res.status(400).json({ success: false, error: err });
 
   const {
-    serial_number, entry_date, branch_name, customer_name,
+    entry_date, branch_name, customer_name,
     phone_number, amount_paid, payment_mode, transaction_details,
     scheme_type,
     referred_by, referred_by_emp_id, referred_by_role,
@@ -145,7 +146,9 @@ app.post("/api/entries", async (req, res) => {
     gold_package,
   } = req.body;
 
-  const sql = `
+  const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
+
+  const insertSql = `
     INSERT INTO customer_entries (
       serial_number, entry_date, branch_name, customer_name,
       phone_number, amount_paid, payment_mode, transaction_details,
@@ -159,9 +162,31 @@ app.post("/api/entries", async (req, res) => {
       $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
     ) RETURNING id`;
 
+  const client = await pool.connect();
   try {
-    const result = await pool.query(sql, [
-      serial_number || null, entry_date, branch_name ? branch_name.toUpperCase() : branch_name, customer_name,
+    await client.query("BEGIN");
+
+    // Advisory lock scoped to (branch, today) — serial number is always based
+    // on the actual submission date (CURRENT_DATE), never the form's entry_date.
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtext($1))",
+      [`${normalizedBranch}:${new Date().toLocaleDateString("en-CA")}`]
+    );
+
+    // Serial number counts entries submitted today (created_at::date = CURRENT_DATE),
+    // regardless of what entry_date the staff selected in the form.
+    const { rows: snRows } = await client.query(
+      `SELECT COALESCE(MAX(
+         CASE WHEN serial_number ~ '^[0-9]+$' THEN serial_number::integer ELSE 0 END
+       ), 0) + 1 AS next_sn
+       FROM customer_entries
+       WHERE branch_name = $1 AND created_at::date = CURRENT_DATE`,
+      [normalizedBranch]
+    );
+    const nextSerial = String(snRows[0].next_sn);
+
+    const result = await client.query(insertSql, [
+      nextSerial, entry_date, normalizedBranch, customer_name,
       phone_number, Number(amount_paid), payment_mode, transaction_details || null,
       scheme_type,
       referred_by || null, referred_by_emp_id || null, referred_by_role || null,
@@ -170,13 +195,20 @@ app.post("/api/entries", async (req, res) => {
       land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
       gold_package || null,
     ]);
-    return res.status(201).json({ success: true, message: "Entry saved successfully", id: result.rows[0].id });
+
+    await client.query("COMMIT");
+    return res.status(201).json({
+      success: true,
+      message: "Entry saved successfully",
+      id: result.rows[0].id,
+      serial_number: nextSerial,
+    });
   } catch (e) {
-    if (e.code === '23505') { // PostgreSQL unique violation code
-      return res.status(400).json({ success: false, error: "An entry with this S.No already exists. Please use a unique S.No." });
-    }
+    await client.query("ROLLBACK");
     console.error("DB insert error:", e.message);
     return res.status(500).json({ success: false, error: "Database error" });
+  } finally {
+    client.release();
   }
 });
 
@@ -195,10 +227,10 @@ app.get("/api/entries", async (req, res) => {
   }
 
   if (scheme)    { params.push(scheme);    conditions.push(`scheme_type = $${params.length}`); }
-  if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
-  if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }
+  if (date_from) { params.push(date_from); conditions.push(`created_at::date >= $${params.length}`); }
+  if (date_to)   { params.push(date_to);   conditions.push(`created_at::date <= $${params.length}`); }
 
-  const sql = `SELECT * FROM customer_entries WHERE ${conditions.join(" AND ")} ORDER BY created_at DESC`;
+  const sql = `SELECT * FROM customer_entries WHERE ${conditions.join(" AND ")} ORDER BY created_at ASC`;
   try {
     const result = await pool.query(sql, params);
     return res.json({ success: true, count: result.rowCount, data: result.rows });

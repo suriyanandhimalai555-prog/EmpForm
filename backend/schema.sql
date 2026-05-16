@@ -95,6 +95,32 @@ BEGIN
   END IF;
 END $$;
 
+-- ── Serial number: per-branch-per-day uniqueness ─────────────────────────────
+-- Migrate from global UNIQUE(serial_number) → composite UNIQUE(branch,date,serial)
+DO $$
+BEGIN
+  -- Drop old global unique constraint if present
+  IF EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'customer_entries'
+      AND constraint_name = 'customer_entries_serial_number_key'
+      AND constraint_type = 'UNIQUE'
+  ) THEN
+    ALTER TABLE customer_entries DROP CONSTRAINT customer_entries_serial_number_key;
+  END IF;
+
+  -- Add composite unique constraint (branch + date + serial)
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.table_constraints
+    WHERE table_name = 'customer_entries'
+      AND constraint_name = 'uq_ce_branch_date_serial'
+  ) THEN
+    ALTER TABLE customer_entries
+      ADD CONSTRAINT uq_ce_branch_date_serial
+      UNIQUE (branch_name, entry_date, serial_number);
+  END IF;
+END $$;
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_ce_branch_date  ON customer_entries (branch_name, entry_date);
 CREATE INDEX IF NOT EXISTS idx_ce_scheme       ON customer_entries (scheme_type);
