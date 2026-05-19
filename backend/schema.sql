@@ -131,5 +131,33 @@ CREATE TABLE IF NOT EXISTS branch_users (
   id              SERIAL PRIMARY KEY,
   email           TEXT UNIQUE NOT NULL,
   password_hash   TEXT NOT NULL,
-  branch_name     TEXT NOT NULL
+  branch_name     TEXT NOT NULL,
+  role            TEXT NOT NULL DEFAULT 'branch'
+                    CHECK (role IN ('branch', 'md', 'management'))
 );
+
+-- Safely add role column if upgrading an existing table
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='branch_users' AND column_name='role'
+  ) THEN
+    ALTER TABLE branch_users ADD COLUMN role TEXT NOT NULL DEFAULT 'branch'
+      CHECK (role IN ('branch', 'md', 'management'));
+  END IF;
+END $$;
+
+-- Migrate existing ALL-branch users to md role (idempotent)
+UPDATE branch_users SET role = 'md' WHERE UPPER(branch_name) = 'ALL' AND role = 'branch';
+
+-- Add updated_at column to customer_entries for edit audit trail
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='updated_at'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN updated_at TIMESTAMPTZ;
+  END IF;
+END $$;

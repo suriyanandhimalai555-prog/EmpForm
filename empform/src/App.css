@@ -1028,4 +1028,167 @@ textarea.field-input {
     width: 100%;
     text-align: center;
   }
+  .admin-topbar-center { display:none; }
+  .mgmt-tabs { width:100%; justify-content:center; }
+}
+
+/* ── Modal Overlay ─────────────────────────────────────── */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+.modal-card {
+  background: white;
+  border-radius: var(--radius-lg);
+  padding: 2rem;
+  max-width: 800px;
+  width: 90vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.15);
+}
+.confirm-card {
+  max-width: 420px;
+  text-align: center;
+}
+.modal-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  margin-top: 1.5rem;
+}
+
+/* ── Action Buttons ────────────────────────────────────── */
+.action-btn {
+  padding: 0.3rem 0.6rem;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.78rem;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.edit-btn {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+.edit-btn:hover { background: #bfdbfe; }
+.delete-btn {
+  background: #fee2e2;
+  color: #dc2626;
+  margin-left: 0.35rem;
+}
+.delete-btn:hover { background: #fecaca; }
+.danger-btn {
+  background: #dc2626;
+  color: white;
+  padding: 0.5rem 1.25rem;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.danger-btn:hover { background: #b91c1c; }
+.cancel-btn {
+  background: #f1f5f9;
+  color: var(--text-secondary);
+  padding: 0.5rem 1.25rem;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: var(--transition);
+}
+.cancel-btn:hover { background: #e2e8f0; }
+
+/* ── Tab Bar ───────────────────────────────────────────── */
+.admin-topbar-center {
+  display: flex;
+  align-items: center;
+}
+.mgmt-tabs {
+  display: flex;
+  gap: 0;
+  background: rgba(255,255,255,0.15);
+  border-radius: 8px;
+  padding: 3px;
+}
+.mgmt-tab {
+  padding: 0.45rem 1.1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: rgba(255,255,255,0.7);
+  border-radius: 6px;
+  transition: var(--transition);
+}
+.mgmt-tab.active {
+  background: rgba(255,255,255,0.25);
+  color: white;
+}
+.mgmt-tab:hover:not(.active) {
+  color: rgba(255,255,255,0.9);
+}
+
+/* ── Management Badge ──────────────────────────────────── */
+.mgmt-badge {
+  background: rgba(234, 179, 8, 0.2) !important;
+  color: #fbbf24 !important;
+  border: 1px solid rgba(234, 179, 8, 0.3) !important;
+}
+
+/* ── Role Badges ───────────────────────────────────────── */
+.role-badge {
+  padding: 0.2rem 0.6rem;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.role-branch     { background: #dbeafe; color: #1d4ed8; }
+.role-md         { background: #f3e8ff; color: #7c3aed; }
+.role-management { background: #fef3c7; color: #b45309; }
+
+/* ── Feedback Toast ────────────────────────────────────── */
+.feedback-toast {
+  position: fixed;
+  top: 1.5rem;
+  right: 1.5rem;
+  padding: 0.75rem 1.25rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.85rem;
+  z-index: 1100;
+  animation: fadeInOut 3s ease forwards;
+}
+.feedback-toast.success { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+.feedback-toast.error   { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+@keyframes fadeInOut {
+  0%   { opacity:0; transform:translateY(-10px); }
+  10%  { opacity:1; transform:translateY(0); }
+  80%  { opacity:1; }
+  100% { opacity:0; }
+}
+
+/* ── Mobile: Management tabs below topbar ──────────────── */
+@media (max-width: 768px) {
+  .admin-topbar {
+    flex-wrap: wrap;
+  }
+  .admin-topbar-center {
+    order: 3;
+    width: 100%;
+    justify-content: center;
+    padding-top: 0.5rem;
+  }
 }
