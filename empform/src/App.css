@@ -791,29 +791,39 @@ textarea.field-input {
   text-transform: uppercase;
   letter-spacing: 0.05em;
   border-bottom: 2px solid var(--border-light);
+  border-right: 1px solid #e2e8f0;
   position: sticky;
   top: 0;
   background: #f8fafc;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.admin-table th:last-child { border-right: none; }
 .admin-table td {
   padding: 0.55rem 0.75rem;
   color: var(--text-primary);
   border-bottom: 1px solid #f3f4f6;
+  border-right: 1px solid #f0f4f8;
   overflow: hidden;
   text-overflow: ellipsis;
 }
+.admin-table td:last-child { border-right: none; }
 
 /* prevent text selection while dragging column resize handle */
 .admin-table-wrap.resizing, .table-card.resizing { user-select: none; }
 
-/* Branch entries table cell clipping */
+/* Branch entries table cell clipping + column dividers */
+.table-card table th {
+  border-right: 1px solid #e2e8f0;
+}
+.table-card table th:last-child { border-right: none; }
 .table-card table td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border-right: 1px solid #f0f4f8;
 }
+.table-card table td:last-child { border-right: none; }
 .tr-even { background: #ffffff; }
 .tr-odd  { background: #fafafa; }
 .admin-table tbody tr:hover { background: #f0f9ff; }
