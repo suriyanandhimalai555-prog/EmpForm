@@ -80,6 +80,9 @@ function validateEntry(body) {
   if (missing.length) return `Missing required fields: ${missing.join(", ")}`;
   if (!["Cash","Bank","GPay"].includes(body.payment_mode))
     return "payment_mode must be one of: Cash, Bank, GPay";
+  const entryYear = new Date(body.entry_date).getFullYear();
+  if (entryYear < 2024 || entryYear > 2100)
+    return "entry_date year must be between 2024 and 2100";
   return null;
 }
 

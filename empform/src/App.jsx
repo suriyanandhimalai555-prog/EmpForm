@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL
@@ -259,14 +259,85 @@ function SectionTitle({ icon, title }) {
   );
 }
 
+// Returns the current billing period (7th of month → 6th of next month)
+function getCurrentBillingPeriod(now) {
+  const year  = now.getFullYear();
+  const month = now.getMonth(); // 0-indexed
+  const day   = now.getDate();
+  const MONTHS = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+
+  let startYear, startMonth, endYear, endMonth;
+  if (day >= 7) {
+    startYear = year; startMonth = month;
+    const endDate = new Date(year, month + 1, 6);
+    endYear = endDate.getFullYear(); endMonth = endDate.getMonth();
+  } else {
+    const startDate = new Date(year, month - 1, 7);
+    startYear = startDate.getFullYear(); startMonth = startDate.getMonth();
+    endYear = year; endMonth = month;
+  }
+
+  const periodStart = `${startYear}-${String(startMonth + 1).padStart(2, "0")}-07`;
+  const periodEnd   = `${endYear}-${String(endMonth + 1).padStart(2, "0")}-06`;
+  const periodLabel = `${MONTHS[startMonth]} 7 – ${MONTHS[endMonth]} 6, ${endYear}`;
+
+  return { periodStart, periodEnd, periodLabel };
+}
+
+// Drag-to-resize column widths hook
+function useResizableColumns(initWidths) {
+  const [widths, setWidths] = useState(initWidths);
+  const resizingRef = useRef(null);
+
+  const startResize = (idx, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = { idx, startX: e.clientX, startW: widths[idx] };
+
+    const onMove = (ev) => {
+      if (!resizingRef.current) return;
+      const { idx, startX, startW } = resizingRef.current;
+      setWidths(prev => {
+        const next = [...prev];
+        next[idx] = Math.max(50, startW + ev.clientX - startX);
+        return next;
+      });
+    };
+    const onUp = () => {
+      resizingRef.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  };
+
+  return [widths, startResize];
+}
+
+function ResizeHandle({ onMouseDown }) {
+  return (
+    <div
+      onMouseDown={onMouseDown}
+      style={{
+        position:"absolute", right:0, top:0, bottom:0, width:"5px",
+        cursor:"col-resize", zIndex:2, background:"transparent",
+        transition:"background 0.15s",
+      }}
+      onMouseEnter={e => e.currentTarget.style.background = "rgba(59,130,246,0.45)"}
+      onMouseLeave={e => e.currentTarget.style.background = "transparent"}
+    />
+  );
+}
+
 // ── MD Dashboard ──────────────────────────────────────────────────────────────
 function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdFilterDateFrom, setMdFilterDateFrom, mdFilterDateTo, setMdFilterDateTo }) {
   const now          = new Date();
   const today        = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
-  const currentMonth = now.getMonth();
-  const currentYear  = now.getFullYear();
-  const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
+  const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
+  const monthName    = periodLabel;
   const isFiltered   = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
+  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130]);
 
   // All stats derived from the already-filtered entries array
   const totalEntries = entries.length;
@@ -277,9 +348,8 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount   = todayEntries.length;
 
-  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
   const thisMonthRevenue = entries
-    .filter(e => String(e.entry_date).slice(0,7) === currentMonthKey)
+    .filter(e => { const d = String(e.entry_date).slice(0,10); return d >= periodStart && d <= periodEnd; })
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -365,18 +435,18 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
           <div className="kpi-card" data-color="green">
             <div className="kpi-top">
               <span className="kpi-icon-wrap kpi-icon-green">💰</span>
-              <span className="kpi-badge">{isFiltered ? "Filtered" : "All time"}</span>
+              <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
             </div>
-            <div className="kpi-value">₹{totalRevenue.toLocaleString()}</div>
-            <div className="kpi-label">Total Revenue</div>
+            <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+            <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
           </div>
           <div className="kpi-card" data-color="purple">
             <div className="kpi-top">
               <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
-              <span className="kpi-badge">{monthName}</span>
+              <span className="kpi-badge">{isFiltered ? monthName : "All time"}</span>
             </div>
-            <div className="kpi-value">₹{thisMonthRevenue.toLocaleString()}</div>
-            <div className="kpi-label">This Month</div>
+            <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
+            <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
           </div>
           <div className="kpi-card" data-color="orange">
             <div className="kpi-top">
@@ -495,21 +565,17 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
             </div>
           ) : (
             <div className="admin-table-wrap">
-              <table className="admin-table">
+              <table className="admin-table" style={{ tableLayout:"fixed" }}>
+                <colgroup>
+                  {colWidths.map((w, i) => <col key={i} style={{ width: w+"px" }} />)}
+                </colgroup>
                 <thead>
                   <tr>
-                    <th>S.No</th>
-                    <th>Date</th>
-                    <th>Branch</th>
-                    <th>Customer</th>
-                    <th>Phone</th>
-                    <th>Amount</th>
-                    <th>Mode</th>
-                    <th>Scheme</th>
-                    <th>Referred By</th>
-                    <th>Higher Official</th>
-                    <th>Land / Gold</th>
-                    <th>Notes</th>
+                    {["S.No","Date","Branch","Customer","Phone","Amount","Mode","Scheme","Referred By","Higher Official","Land / Gold","Notes"].map((h, i) => (
+                      <th key={h} style={{ position:"relative" }}>
+                        {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
+                      </th>
+                    ))}
                   </tr>
                 </thead>
                 <tbody>
@@ -640,7 +706,7 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
 
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} />
+          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min="2024-01-01" max={todayISO()} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
@@ -862,10 +928,10 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
 
   const now          = new Date();
   const today        = now.toLocaleDateString("en-CA");
-  const currentMonth = now.getMonth();
-  const currentYear  = now.getFullYear();
-  const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
+  const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
+  const monthName    = periodLabel;
   const isFiltered   = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
+  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130, 110]);
 
   const totalEntries = entries.length;
   const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
@@ -873,9 +939,8 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
   const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount   = todayEntries.length;
 
-  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
   const thisMonthRevenue = entries
-    .filter(e => String(e.entry_date).slice(0,7) === currentMonthKey)
+    .filter(e => { const d = String(e.entry_date).slice(0,10); return d >= periodStart && d <= periodEnd; })
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -1000,18 +1065,18 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
               <div className="kpi-card" data-color="green">
                 <div className="kpi-top">
                   <span className="kpi-icon-wrap kpi-icon-green">💰</span>
-                  <span className="kpi-badge">{isFiltered ? "Filtered" : "All time"}</span>
+                  <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
                 </div>
-                <div className="kpi-value">₹{totalRevenue.toLocaleString()}</div>
-                <div className="kpi-label">Total Revenue</div>
+                <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+                <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
               </div>
               <div className="kpi-card" data-color="purple">
                 <div className="kpi-top">
                   <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
-                  <span className="kpi-badge">{monthName}</span>
+                  <span className="kpi-badge">{isFiltered ? monthName : "All time"}</span>
                 </div>
-                <div className="kpi-value">₹{thisMonthRevenue.toLocaleString()}</div>
-                <div className="kpi-label">This Month</div>
+                <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
+                <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
               </div>
               <div className="kpi-card" data-color="orange">
                 <div className="kpi-top">
@@ -1126,22 +1191,17 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                 </div>
               ) : (
                 <div className="admin-table-wrap">
-                  <table className="admin-table">
+                  <table className="admin-table" style={{ tableLayout:"fixed" }}>
+                    <colgroup>
+                      {colWidths.map((w, i) => <col key={i} style={{ width: w+"px" }} />)}
+                    </colgroup>
                     <thead>
                       <tr>
-                        <th>S.No</th>
-                        <th>Date</th>
-                        <th>Branch</th>
-                        <th>Customer</th>
-                        <th>Phone</th>
-                        <th>Amount</th>
-                        <th>Mode</th>
-                        <th>Scheme</th>
-                        <th>Referred By</th>
-                        <th>Higher Official</th>
-                        <th>Land / Gold</th>
-                        <th>Notes</th>
-                        <th style={{ width:"110px" }}>Actions</th>
+                        {["S.No","Date","Branch","Customer","Phone","Amount","Mode","Scheme","Referred By","Higher Official","Land / Gold","Notes","Actions"].map((h, i) => (
+                          <th key={h} style={{ position:"relative" }}>
+                            {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
+                          </th>
+                        ))}
                       </tr>
                     </thead>
                     <tbody>
@@ -1199,9 +1259,8 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
 function BranchStats({ entries, filterDate }) {
   const now          = new Date();
   const today        = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
-  const currentMonth = now.getMonth();
-  const currentYear  = now.getFullYear();
-  const monthName    = now.toLocaleString("default", { month:"long", year:"numeric" });
+  const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
+  const monthName    = periodLabel;
 
   const totalEntries    = entries.length;
   const totalRevenue    = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
@@ -1213,9 +1272,8 @@ function BranchStats({ entries, filterDate }) {
   const todayRevenue    = selectedEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
   const todayCount      = selectedEntries.length;
 
-  const currentMonthKey = `${currentYear}-${String(currentMonth + 1).padStart(2, "0")}`;
   const thisMonthRevenue = entries
-    .filter(e => String(e.entry_date).slice(0,7) === currentMonthKey)
+    .filter(e => { const d = String(e.entry_date).slice(0,10); return d >= periodStart && d <= periodEnd; })
     .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
 
   const revenueByScheme = {};
@@ -1243,13 +1301,13 @@ function BranchStats({ entries, filterDate }) {
         </div>
         <div className="bkpi-card bkpi-green">
           <div className="bkpi-icon">💰</div>
-          <div className="bkpi-value">₹{totalRevenue.toLocaleString()}</div>
-          <div className="bkpi-label">Total Revenue</div>
+          <div className="bkpi-value">₹{thisMonthRevenue.toLocaleString()}</div>
+          <div className="bkpi-label">{monthName}</div>
         </div>
         <div className="bkpi-card bkpi-purple">
           <div className="bkpi-icon">📅</div>
-          <div className="bkpi-value">₹{thisMonthRevenue.toLocaleString()}</div>
-          <div className="bkpi-label">{monthName}</div>
+          <div className="bkpi-value">₹{totalRevenue.toLocaleString()}</div>
+          <div className="bkpi-label">All Time Revenue</div>
         </div>
         <div className="bkpi-card bkpi-orange">
           <div className="bkpi-icon">⚡</div>
@@ -1290,6 +1348,7 @@ function BranchStats({ entries, filterDate }) {
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
 function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
   const todayLocal = new Date().toLocaleDateString("en-CA");
+  const [colWidths, startResize] = useResizableColumns([60, 105, 130, 160, 120, 100, 90, 140, 185, 175, 175, 165, 80, 155]);
 
   const filtered = filterDate
     ? entries.filter(e => String(e.entry_date).slice(0,10) === filterDate)
@@ -1334,11 +1393,16 @@ function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
       ) : filtered.length === 0 ? (
         <p style={{ color:"var(--text-muted)", fontSize:"0.9rem", marginTop:"1rem" }}>No entries for this date.</p>
       ) : (
-        <table style={{ width:"100%", borderCollapse:"collapse", marginTop:"1rem", fontSize:"0.85rem", textAlign:"left", whiteSpace:"nowrap" }}>
+        <table style={{ borderCollapse:"collapse", tableLayout:"fixed", marginTop:"1rem", fontSize:"0.85rem", textAlign:"left", whiteSpace:"nowrap" }}>
+          <colgroup>
+            {colWidths.map((w, i) => <col key={i} style={{ width: w+"px" }} />)}
+          </colgroup>
           <thead>
             <tr style={{ borderBottom:"1px solid var(--border-light)" }}>
-              {["S.No","Date","Branch","Customer","Phone","Amount (₹)","Pay Mode","Txn Details","Scheme","Referred By","Official","Land Info","Gold Pkg","Notes"].map(h => (
-                <th key={h} style={{ padding:"0.5rem" }}>{h}</th>
+              {["S.No","Date","Branch","Customer","Phone","Amount (₹)","Pay Mode","Txn Details","Scheme","Referred By","Official","Land Info","Gold Pkg","Notes"].map((h, i) => (
+                <th key={h} style={{ padding:"0.5rem", position:"relative", background:"#f8fafc" }}>
+                  {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
+                </th>
               ))}
             </tr>
           </thead>
@@ -1555,7 +1619,7 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} max={todayISO()} />
+          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min="2024-01-01" max={todayISO()} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />

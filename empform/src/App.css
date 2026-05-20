@@ -777,7 +777,6 @@ textarea.field-input {
 
 .admin-table-wrap { overflow-x: auto; }
 .admin-table {
-  width: 100%;
   border-collapse: collapse;
   font-size: 0.81rem;
   text-align: left;
@@ -785,7 +784,7 @@ textarea.field-input {
 }
 .admin-table thead tr { background: #f8fafc; }
 .admin-table th {
-  padding: 0.6rem 1rem;
+  padding: 0.6rem 1rem 0.6rem 0.75rem;
   font-size: 0.72rem;
   font-weight: 600;
   color: var(--text-muted);
@@ -795,11 +794,25 @@ textarea.field-input {
   position: sticky;
   top: 0;
   background: #f8fafc;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .admin-table td {
-  padding: 0.55rem 1rem;
+  padding: 0.55rem 0.75rem;
   color: var(--text-primary);
   border-bottom: 1px solid #f3f4f6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* prevent text selection while dragging column resize handle */
+.admin-table-wrap.resizing, .table-card.resizing { user-select: none; }
+
+/* Branch entries table cell clipping */
+.table-card table td {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .tr-even { background: #ffffff; }
 .tr-odd  { background: #fafafa; }
@@ -809,8 +822,8 @@ textarea.field-input {
 .td-nowrap { white-space: nowrap; }
 .td-branch { font-weight: 600; color: var(--text-secondary); }
 .td-amount { color: var(--accent-green); font-weight: 700; }
-.td-clip   { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
-.td-notes  { max-width: 120px; overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
+.td-clip   { overflow: hidden; text-overflow: ellipsis; }
+.td-notes  { overflow: hidden; text-overflow: ellipsis; color: var(--text-muted); }
 
 /* Payment mode badges */
 .mode-badge {
