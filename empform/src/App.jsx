@@ -330,6 +330,36 @@ function ResizeHandle({ onMouseDown }) {
   );
 }
 
+// ── Pagination ────────────────────────────────────────────────────────────────
+function Pagination({ total, page, pageSize, onPage, onPageSize }) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to   = Math.min(page * pageSize, total);
+  return (
+    <div className="pagination-bar">
+      <span className="pagination-info">
+        {total === 0 ? "No entries" : `${from}–${to} of ${total}`}
+      </span>
+      <div className="pagination-controls">
+        <button className="page-btn" onClick={() => onPage(1)} disabled={page === 1}>«</button>
+        <button className="page-btn" onClick={() => onPage(page - 1)} disabled={page === 1}>‹</button>
+        <span className="page-label">Page {page} / {totalPages}</span>
+        <button className="page-btn" onClick={() => onPage(page + 1)} disabled={page >= totalPages}>›</button>
+        <button className="page-btn" onClick={() => onPage(totalPages)} disabled={page >= totalPages}>»</button>
+      </div>
+      <div className="pagination-size">
+        <label>Rows</label>
+        <select value={pageSize} onChange={e => { onPageSize(Number(e.target.value)); onPage(1); }}>
+          <option value={25}>25</option>
+          <option value={50}>50</option>
+          <option value={100}>100</option>
+          <option value={250}>250</option>
+        </select>
+      </div>
+    </div>
+  );
+}
+
 // ── MD Dashboard ──────────────────────────────────────────────────────────────
 function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdFilterDateFrom, setMdFilterDateFrom, mdFilterDateTo, setMdFilterDateTo }) {
   const now          = new Date();
@@ -338,6 +368,12 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
   const monthName    = periodLabel;
   const isFiltered   = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
   const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize]       = useState(50);
+
+  useEffect(() => { setCurrentPage(1); }, [mdFilterBranch, mdFilterDateFrom, mdFilterDateTo]);
+
+  const paginatedEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   // All stats derived from the already-filtered entries array
   const totalEntries = entries.length;
@@ -432,14 +468,6 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
             <div className="kpi-value">{totalEntries.toLocaleString()}</div>
             <div className="kpi-label">Total Entries</div>
           </div>
-          <div className="kpi-card" data-color="green">
-            <div className="kpi-top">
-              <span className="kpi-icon-wrap kpi-icon-green">💰</span>
-              <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
-            </div>
-            <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
-            <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
-          </div>
           <div className="kpi-card" data-color="purple">
             <div className="kpi-top">
               <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
@@ -447,6 +475,14 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
             </div>
             <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
             <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
+          </div>
+          <div className="kpi-card" data-color="green">
+            <div className="kpi-top">
+              <span className="kpi-icon-wrap kpi-icon-green">💰</span>
+              <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
+            </div>
+            <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+            <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
           </div>
           <div className="kpi-card" data-color="orange">
             <div className="kpi-top">
@@ -579,7 +615,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((e, idx) => {
+                  {paginatedEntries.map((e, idx) => {
                     const color = SCHEME_COLORS[e.scheme_type] || "#6b7280";
                     const landInfo = e.land_kind_of_payment
                       ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
@@ -615,6 +651,13 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                   })}
                 </tbody>
               </table>
+              <Pagination
+                total={totalEntries}
+                page={currentPage}
+                pageSize={pageSize}
+                onPage={setCurrentPage}
+                onPageSize={setPageSize}
+              />
             </div>
           )}
         </div>
@@ -932,6 +975,12 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
   const monthName    = periodLabel;
   const isFiltered   = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
   const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130, 110]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize]       = useState(50);
+
+  useEffect(() => { setCurrentPage(1); }, [mdFilterBranch, mdFilterDateFrom, mdFilterDateTo]);
+
+  const paginatedEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
 
   const totalEntries = entries.length;
   const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
@@ -1062,14 +1111,6 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                 <div className="kpi-value">{totalEntries.toLocaleString()}</div>
                 <div className="kpi-label">Total Entries</div>
               </div>
-              <div className="kpi-card" data-color="green">
-                <div className="kpi-top">
-                  <span className="kpi-icon-wrap kpi-icon-green">💰</span>
-                  <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
-                </div>
-                <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
-                <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
-              </div>
               <div className="kpi-card" data-color="purple">
                 <div className="kpi-top">
                   <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
@@ -1077,6 +1118,14 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                 </div>
                 <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
                 <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
+              </div>
+              <div className="kpi-card" data-color="green">
+                <div className="kpi-top">
+                  <span className="kpi-icon-wrap kpi-icon-green">💰</span>
+                  <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
+                </div>
+                <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+                <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
               </div>
               <div className="kpi-card" data-color="orange">
                 <div className="kpi-top">
@@ -1205,7 +1254,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                       </tr>
                     </thead>
                     <tbody>
-                      {entries.map((e, idx) => {
+                      {paginatedEntries.map((e, idx) => {
                         const color = SCHEME_COLORS[e.scheme_type] || "#6b7280";
                         const landInfo = e.land_kind_of_payment
                           ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
@@ -1245,11 +1294,216 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                       })}
                     </tbody>
                   </table>
+                  <Pagination
+                    total={totalEntries}
+                    page={currentPage}
+                    pageSize={pageSize}
+                    onPage={setCurrentPage}
+                    onPageSize={setPageSize}
+                  />
                 </div>
               )}
             </div>
           </>
         )}
+      </main>
+    </div>
+  );
+}
+
+// ── Follow Up Dashboard ───────────────────────────────────────────────────────
+function FollowUpDashboard({ onLogout }) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [date, setDate]     = useState(today);
+  const [data, setData]     = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError]   = useState("");
+  const token = localStorage.getItem("token");
+
+  const fetchData = async (d) => {
+    setLoading(true); setError("");
+    try {
+      const res  = await fetch(`${API_BASE}/follow-up?date=${d}`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      const json = await res.json();
+      if (json.success) setData(json);
+      else setError(json.error || "Failed to load data");
+    } catch { setError("Network error"); }
+    setLoading(false);
+  };
+
+  useEffect(() => { fetchData(date); }, [date]);
+
+  // Auto-refresh every 60 seconds
+  useEffect(() => {
+    const id = setInterval(() => fetchData(date), 60000);
+    return () => clearInterval(id);
+  }, [date]);
+
+  const isToday = date === today;
+  const pct     = data ? Math.round((data.submittedCount / (data.totalBranches || 1)) * 100) : 0;
+
+  return (
+    <div className="admin-layout">
+      <header className="admin-topbar">
+        <div className="admin-topbar-left">
+          <img src="/AVG_logo.jpeg" alt="Logo" className="admin-logo" />
+          <div className="admin-brand">
+            <span className="admin-brand-name">Agilavetri PrimeTech</span>
+            <span className="admin-brand-sub">Follow Up Dashboard</span>
+          </div>
+        </div>
+        <div className="admin-topbar-right">
+          <div className="admin-user-badge" style={{ background:"#fef3c7", color:"#92400e", border:"1px solid #fde68a" }}>
+            <span>📋</span>
+            <span>Follow Up</span>
+          </div>
+          <button className="admin-logout-btn" onClick={onLogout}>Logout</button>
+        </div>
+      </header>
+
+      <main className="admin-main">
+        {/* Date + Refresh bar */}
+        <div style={{ display:"flex", alignItems:"center", gap:"1rem", marginBottom:"1.5rem", flexWrap:"wrap" }}>
+          <label style={{ fontWeight:600, color:"var(--text-muted)", fontSize:"0.9rem" }}>Check Date:</label>
+          <input
+            type="date"
+            className="field-input"
+            value={date}
+            max={today}
+            onChange={e => setDate(e.target.value)}
+            style={{ maxWidth:"180px" }}
+          />
+          {!isToday && (
+            <button
+              onClick={() => setDate(today)}
+              style={{ background:"none", border:"1px solid var(--border-light)", borderRadius:"6px", padding:"0.3rem 0.7rem", cursor:"pointer", fontSize:"0.8rem", color:"var(--text-muted)" }}
+            >
+              Back to Today
+            </button>
+          )}
+          <button
+            onClick={() => fetchData(date)}
+            disabled={loading}
+            style={{ background:"var(--primary)", color:"white", border:"none", borderRadius:"6px", padding:"0.4rem 0.9rem", cursor:"pointer", fontSize:"0.85rem", fontWeight:600 }}
+          >
+            {loading ? "Refreshing…" : "Refresh"}
+          </button>
+          <span style={{ fontSize:"0.78rem", color:"var(--text-muted)" }}>Auto-refreshes every 60s</span>
+        </div>
+
+        {error && <div className="status-banner error" style={{ marginBottom:"1rem", padding:"0.75rem" }}>{error}</div>}
+
+        {data && (
+          <>
+            {/* KPI Cards */}
+            <div className="kpi-grid" style={{ gridTemplateColumns:"repeat(3,1fr)" }}>
+              <div className="kpi-card" data-color="blue">
+                <div className="kpi-top"><span className="kpi-icon-wrap kpi-icon-blue">🏢</span></div>
+                <div className="kpi-value">{data.totalBranches}</div>
+                <div className="kpi-label">Total Active Branches</div>
+              </div>
+              <div className="kpi-card" data-color="green">
+                <div className="kpi-top"><span className="kpi-icon-wrap kpi-icon-green">✅</span></div>
+                <div className="kpi-value">{data.submittedCount}</div>
+                <div className="kpi-label">Submitted</div>
+              </div>
+              <div className="kpi-card" data-color="orange">
+                <div className="kpi-top"><span className="kpi-icon-wrap kpi-icon-orange">⚠️</span></div>
+                <div className="kpi-value">{data.missingCount}</div>
+                <div className="kpi-label">Not Submitted</div>
+              </div>
+            </div>
+
+            {/* Progress bar */}
+            <div style={{ margin:"1.25rem 0", background:"var(--surface-alt)", borderRadius:"8px", padding:"1rem 1.25rem" }}>
+              <div style={{ display:"flex", justifyContent:"space-between", marginBottom:"0.5rem", fontSize:"0.85rem", fontWeight:600 }}>
+                <span style={{ color:"#059669" }}>Submitted {data.submittedCount}</span>
+                <span style={{ color:"#dc2626" }}>Missing {data.missingCount}</span>
+              </div>
+              <div style={{ height:"10px", borderRadius:"99px", background:"#fee2e2", overflow:"hidden" }}>
+                <div style={{ height:"100%", width:`${pct}%`, background:"#059669", borderRadius:"99px", transition:"width 0.5s" }} />
+              </div>
+              <div style={{ textAlign:"center", marginTop:"0.4rem", fontSize:"0.8rem", color:"var(--text-muted)" }}>
+                {pct}% branches submitted for {date}
+              </div>
+            </div>
+
+            {/* Two-column: Missing | Submitted */}
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1.5rem" }}>
+
+              {/* Missing */}
+              <div className="admin-panel">
+                <div className="admin-panel-header">
+                  <div>
+                    <div className="admin-panel-title" style={{ color:"#dc2626" }}>
+                      Not Submitted &nbsp;<span style={{ fontSize:"1rem" }}>({data.missingCount})</span>
+                    </div>
+                    <div className="admin-panel-sub">Branches with no entry for {date}</div>
+                  </div>
+                </div>
+                {data.missingCount === 0 ? (
+                  <div className="admin-empty" style={{ color:"#059669" }}>All branches have submitted!</div>
+                ) : (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem", padding:"0.25rem 0" }}>
+                    {data.missing.map(b => (
+                      <span key={b} style={{ background:"#fee2e2", color:"#dc2626", border:"1px solid #fca5a5", borderRadius:"6px", padding:"0.4rem 0.75rem", fontSize:"0.82rem", fontWeight:600 }}>
+                        {b}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Submitted */}
+              <div className="admin-panel">
+                <div className="admin-panel-header">
+                  <div>
+                    <div className="admin-panel-title" style={{ color:"#059669" }}>
+                      Submitted &nbsp;<span style={{ fontSize:"1rem" }}>({data.submittedCount})</span>
+                    </div>
+                    <div className="admin-panel-sub">Branches with entries for {date}</div>
+                  </div>
+                </div>
+                {data.submittedCount === 0 ? (
+                  <div className="admin-empty">No branches have submitted yet.</div>
+                ) : (
+                  <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem", padding:"0.25rem 0" }}>
+                    {data.submitted.map(b => (
+                      <span key={b} style={{ background:"#dcfce7", color:"#059669", border:"1px solid #86efac", borderRadius:"6px", padding:"0.4rem 0.75rem", fontSize:"0.82rem", fontWeight:600 }}>
+                        {b}
+                      </span>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Never Entered */}
+            {data.neverEntered && data.neverEntered.length > 0 && (
+              <div className="admin-panel" style={{ marginTop:"1.5rem" }}>
+                <div className="admin-panel-header">
+                  <div>
+                    <div className="admin-panel-title" style={{ color:"#7c3aed" }}>
+                      Never Submitted &nbsp;<span style={{ fontSize:"1rem" }}>({data.neverEnteredCount})</span>
+                    </div>
+                    <div className="admin-panel-sub">These branches have never entered any data</div>
+                  </div>
+                </div>
+                <div style={{ display:"flex", flexWrap:"wrap", gap:"0.5rem", padding:"0.25rem 0" }}>
+                  {data.neverEntered.map(b => (
+                    <span key={b} style={{ background:"#ede9fe", color:"#7c3aed", border:"1px solid #c4b5fd", borderRadius:"6px", padding:"0.4rem 0.75rem", fontSize:"0.82rem", fontWeight:600 }}>
+                      {b}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </>
+        )}
+
+        {loading && !data && <div className="admin-empty">Loading…</div>}
       </main>
     </div>
   );
@@ -1557,6 +1811,10 @@ export default function CustomerEntryForm() {
   };
 
   if (!user) return <Login onLogin={setUser} />;
+
+  if (user.role === "followup") {
+    return <FollowUpDashboard onLogout={handleLogout} />;
+  }
 
   if (user.role === "management") {
     return (

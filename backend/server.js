@@ -416,6 +416,56 @@ app.post("/api/admin/reset-password", authenticateToken, requireManagement, asyn
   }
 });
 
+// GET /api/follow-up?date=YYYY-MM-DD  (followup / md / management)
+app.get("/api/follow-up", authenticateToken, async (req, res) => {
+  const allowed = ["followup", "md", "management"];
+  if (!allowed.includes(req.user.role)) {
+    return res.status(403).json({ success: false, error: "Access denied" });
+  }
+
+  const date = req.query.date || new Date().toLocaleDateString("en-CA");
+
+  try {
+    // Active branch accounts (role = 'branch') — these are the ones who should submit
+    const { rows: branchRows } = await pool.query(
+      "SELECT UPPER(branch_name) AS branch_name FROM branch_users WHERE role = 'branch' ORDER BY branch_name ASC"
+    );
+    const allBranches = [...new Set(branchRows.map(r => r.branch_name))];
+
+    // Branches that actually submitted (created_at) on this date in IST
+    const { rows: submittedRows } = await pool.query(
+      "SELECT DISTINCT UPPER(branch_name) AS branch_name FROM customer_entries WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = $1::date",
+      [date]
+    );
+    const submittedSet = new Set(submittedRows.map(r => r.branch_name));
+
+    // Branches that have ever entered any data
+    const { rows: everRows } = await pool.query(
+      "SELECT DISTINCT UPPER(branch_name) AS branch_name FROM customer_entries"
+    );
+    const everSet = new Set(everRows.map(r => r.branch_name));
+
+    const submitted  = allBranches.filter(b => submittedSet.has(b));
+    const missing    = allBranches.filter(b => !submittedSet.has(b));
+    const neverEntered = allBranches.filter(b => !everSet.has(b));
+
+    return res.json({
+      success: true,
+      date,
+      submitted,
+      missing,
+      neverEntered,
+      submittedCount:    submitted.length,
+      missingCount:      missing.length,
+      neverEnteredCount: neverEntered.length,
+      totalBranches:     allBranches.length,
+    });
+  } catch (e) {
+    console.error("Follow-up error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
 app.get("/health", (_req, res) => res.json({ status: "ok" }));
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
