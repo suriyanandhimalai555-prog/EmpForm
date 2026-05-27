@@ -1273,3 +1273,32 @@ textarea.field-input {
     padding-top: 0.5rem;
   }
 }
+
+/* ── Follow Up Dashboard ─────────────────────────────────── */
+.fu-date-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+.fu-kpi-grid {
+  grid-template-columns: repeat(3, 1fr) !important;
+}
+.fu-two-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-top: 0;
+}
+
+@media (max-width: 768px) {
+  .fu-kpi-grid { grid-template-columns: 1fr 1fr !important; }
+  .fu-two-col  { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .fu-date-bar { flex-direction: column; align-items: stretch; }
+  .fu-date-bar input.field-input { max-width: 100% !important; }
+  .fu-date-bar button { width: 100%; text-align: center; justify-content: center; }
+  .fu-kpi-grid { grid-template-columns: 1fr !important; }
+}

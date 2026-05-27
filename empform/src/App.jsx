@@ -1326,6 +1326,7 @@ function FollowUpDashboard({ onLogout }) {
       const res  = await fetch(`${API_BASE}/follow-up?date=${d}`, {
         headers: { "Authorization": `Bearer ${token}` },
       });
+      if (res.status === 401 || res.status === 403) { onLogout(); return; }
       const json = await res.json();
       if (json.success) setData(json);
       else setError(json.error || "Failed to load data");
@@ -1365,7 +1366,7 @@ function FollowUpDashboard({ onLogout }) {
 
       <main className="admin-main">
         {/* Date + Refresh bar */}
-        <div style={{ display:"flex", alignItems:"center", gap:"1rem", marginBottom:"1.5rem", flexWrap:"wrap" }}>
+        <div className="fu-date-bar">
           <label style={{ fontWeight:600, color:"var(--text-muted)", fontSize:"0.9rem" }}>Check Date:</label>
           <input
             type="date"
@@ -1373,7 +1374,7 @@ function FollowUpDashboard({ onLogout }) {
             value={date}
             max={today}
             onChange={e => setDate(e.target.value)}
-            style={{ maxWidth:"180px" }}
+            style={{ maxWidth:"180px", width:"100%" }}
           />
           {!isToday && (
             <button
@@ -1398,7 +1399,7 @@ function FollowUpDashboard({ onLogout }) {
         {data && (
           <>
             {/* KPI Cards */}
-            <div className="kpi-grid" style={{ gridTemplateColumns:"repeat(3,1fr)" }}>
+            <div className="kpi-grid fu-kpi-grid">
               <div className="kpi-card" data-color="blue">
                 <div className="kpi-top"><span className="kpi-icon-wrap kpi-icon-blue">🏢</span></div>
                 <div className="kpi-value">{data.totalBranches}</div>
@@ -1431,7 +1432,7 @@ function FollowUpDashboard({ onLogout }) {
             </div>
 
             {/* Two-column: Missing | Submitted */}
-            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:"1.5rem" }}>
+            <div className="fu-two-col">
 
               {/* Missing */}
               <div className="admin-panel">
