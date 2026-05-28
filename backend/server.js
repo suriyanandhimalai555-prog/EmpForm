@@ -13,8 +13,17 @@ const fs        = require("fs");
 const path      = require("path");
 const bcrypt    = require("bcryptjs");
 const jwt       = require("jsonwebtoken");
+const { S3Client, GetObjectCommand } = require("@aws-sdk/client-s3");
+const { createPresignedPost }        = require("@aws-sdk/s3-presigned-post");
+const { getSignedUrl }               = require("@aws-sdk/s3-request-presigner");
+const { v4: uuidv4 }                 = require("uuid");
 
 const JWT_SECRET = process.env.JWT_SECRET || "super-secure-prime-secret-2026";
+
+// ── S3 client ────────────────────────────────────────────────────────────────
+const AWS_REGION  = process.env.AWS_REGION  || "ap-south-1";
+const S3_BUCKET   = process.env.S3_BUCKET   || "empform-bucket";
+const s3 = new S3Client({ region: AWS_REGION });
 
 // ── PostgreSQL pool ───────────────────────────────────────────────────────────
 const pool = new Pool({
@@ -83,6 +92,12 @@ function validateEntry(body) {
   const entryYear = new Date(body.entry_date).getFullYear();
   if (entryYear < 2024 || entryYear > 2100)
     return "entry_date year must be between 2024 and 2100";
+  if (body.gold_quantity !== undefined && body.gold_quantity !== null && body.gold_quantity !== "") {
+    const qty = parseInt(body.gold_quantity);
+    if (isNaN(qty) || qty < 1) return "gold_quantity must be a positive number";
+    if (body.scheme_type === "GOLD COIN SAVINGS" && qty > 15) return "gold_quantity cannot exceed 15 for Gold Coin Savings";
+    if (body.scheme_type === "JEWEL SAVINGS"     && qty > 19) return "gold_quantity cannot exceed 19 for Jewel Savings";
+  }
   return null;
 }
 
@@ -185,7 +200,8 @@ app.post("/api/entries", async (req, res) => {
     higher_official, higher_official_emp_id, higher_official_role,
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
-    gold_package,
+    gold_package, gold_quantity,
+    proof_url,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
@@ -199,9 +215,9 @@ app.post("/api/entries", async (req, res) => {
       higher_official, higher_official_emp_id, higher_official_role,
       notes,
       land_kind_of_payment, land_site_name, land_site_number, land_layout,
-      gold_package
+      gold_package, gold_quantity, proof_url
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
     ) RETURNING id`;
 
   const client = await pool.connect();
@@ -235,7 +251,7 @@ app.post("/api/entries", async (req, res) => {
       higher_official || null, higher_official_emp_id || null, higher_official_role || null,
       notes || null,
       land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
-      gold_package || null,
+      gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
     ]);
 
     await client.query("COMMIT");
@@ -256,15 +272,13 @@ app.post("/api/entries", async (req, res) => {
 
 // GET /api/entries
 app.get("/api/entries", async (req, res) => {
-  const { branch, filterBranch, scheme, date_from, date_to, directorBranches } = req.query;
+  const { branch, filterBranch, scheme, date_from, date_to, directorBranches, page, pageSize } = req.query;
   const conditions = ["1=1"];
   const params = [];
 
   if (directorBranches) {
-    // Director: filter by their list of branches (comma-separated)
     const branchList = directorBranches.split(',').map(b => b.trim().toUpperCase()).filter(Boolean);
     const filterBranchUpper = filterBranch ? filterBranch.toUpperCase() : null;
-    // If a specific branch is selected from the director's list, filter to just that one
     if (filterBranchUpper && branchList.includes(filterBranchUpper)) {
       params.push(filterBranchUpper);
       conditions.push(`UPPER(branch_name) = $${params.length}`);
@@ -285,11 +299,148 @@ app.get("/api/entries", async (req, res) => {
   if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
   if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }
 
-  const sql = `SELECT * FROM customer_entries WHERE ${conditions.join(" AND ")} ORDER BY entry_date ASC, branch_name ASC, (CASE WHEN serial_number ~ '^[0-9]+$' THEN serial_number::integer ELSE 0 END) ASC, created_at ASC`;
+  const whereClause = conditions.join(" AND ");
+  const orderClause = `ORDER BY entry_date ASC, branch_name ASC, (CASE WHEN serial_number ~ '^[0-9]+$' THEN serial_number::integer ELSE 0 END) ASC, created_at ASC`;
+
   try {
+    // Server-side pagination when page & pageSize are provided
+    if (page && pageSize) {
+      const pg = Math.max(1, parseInt(page));
+      const ps = Math.max(1, Math.min(200, parseInt(pageSize)));
+      const offset = (pg - 1) * ps;
+
+      // Get total count
+      const countResult = await pool.query(`SELECT COUNT(*) AS total FROM customer_entries WHERE ${whereClause}`, params);
+      const totalCount = parseInt(countResult.rows[0].total);
+
+      // Get paginated data
+      const paginatedParams = [...params, ps, offset];
+      const sql = `SELECT * FROM customer_entries WHERE ${whereClause} ${orderClause} LIMIT $${paginatedParams.length - 1} OFFSET $${paginatedParams.length}`;
+      const result = await pool.query(sql, paginatedParams);
+
+      return res.json({
+        success: true,
+        data: result.rows,
+        count: result.rowCount,
+        totalCount,
+        page: pg,
+        pageSize: ps,
+      });
+    }
+
+    // No pagination — return all (backward compatible)
+    const sql = `SELECT * FROM customer_entries WHERE ${whereClause} ${orderClause}`;
     const result = await pool.query(sql, params);
     return res.json({ success: true, count: result.rowCount, data: result.rows });
   } catch (e) {
+    console.error("Entries query error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
+// GET /api/entries/stats — lightweight aggregated stats (no row data)
+app.get("/api/entries/stats", async (req, res) => {
+  const { directorBranches, filterBranch, branch, date_from, date_to, today, periodStart, periodEnd } = req.query;
+  const conditions = ["1=1"];
+  const params = [];
+
+  // Branch filtering (same logic as entries)
+  if (directorBranches) {
+    const branchList = directorBranches.split(',').map(b => b.trim().toUpperCase()).filter(Boolean);
+    const filterBranchUpper = filterBranch ? filterBranch.toUpperCase() : null;
+    if (filterBranchUpper && branchList.includes(filterBranchUpper)) {
+      params.push(filterBranchUpper);
+      conditions.push(`UPPER(branch_name) = $${params.length}`);
+    } else {
+      const placeholders = branchList.map((_, i) => `$${params.length + i + 1}`).join(', ');
+      params.push(...branchList);
+      conditions.push(`UPPER(branch_name) IN (${placeholders})`);
+    }
+  } else if (branch && branch !== 'ALL') {
+    params.push(branch.toUpperCase());
+    conditions.push(`UPPER(branch_name) = $${params.length}`);
+  } else if (branch === 'ALL' && filterBranch) {
+    params.push(filterBranch.toUpperCase());
+    conditions.push(`UPPER(branch_name) = $${params.length}`);
+  }
+
+  if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
+  if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }
+
+  const whereClause = conditions.join(" AND ");
+
+  try {
+    // Total entries & revenue for the filtered range
+    const totalsRes = await pool.query(
+      `SELECT COUNT(*) AS total_entries, COALESCE(SUM(amount_paid), 0) AS total_revenue FROM customer_entries WHERE ${whereClause}`,
+      params
+    );
+    const { total_entries, total_revenue } = totalsRes.rows[0];
+
+    // Today's stats (needs today param)
+    let todayCount = 0, todayRevenue = 0;
+    const todayByScheme = {};
+    if (today) {
+      const todayParams = [...params, today];
+      const todayRes = await pool.query(
+        `SELECT COUNT(*) AS cnt, COALESCE(SUM(amount_paid), 0) AS rev FROM customer_entries WHERE ${whereClause} AND entry_date = $${todayParams.length}`,
+        todayParams
+      );
+      todayCount = parseInt(todayRes.rows[0].cnt);
+      todayRevenue = parseFloat(todayRes.rows[0].rev);
+
+      // Today by scheme
+      const todaySchemeRes = await pool.query(
+        `SELECT scheme_type, COALESCE(SUM(amount_paid), 0) AS rev FROM customer_entries WHERE ${whereClause} AND entry_date = $${todayParams.length} GROUP BY scheme_type`,
+        todayParams
+      );
+      todaySchemeRes.rows.forEach(r => { todayByScheme[r.scheme_type] = parseFloat(r.rev); });
+    }
+
+    // Period stats (needs periodStart, periodEnd)
+    let periodRevenue = 0;
+    if (periodStart && periodEnd) {
+      const periodParams = [...params, periodStart, periodEnd];
+      const periodRes = await pool.query(
+        `SELECT COALESCE(SUM(amount_paid), 0) AS rev FROM customer_entries WHERE ${whereClause} AND entry_date >= $${periodParams.length - 1} AND entry_date <= $${periodParams.length}`,
+        periodParams
+      );
+      periodRevenue = parseFloat(periodRes.rows[0].rev);
+    }
+
+    // Revenue by scheme
+    const schemeRes = await pool.query(
+      `SELECT scheme_type, COUNT(*) AS cnt, COALESCE(SUM(amount_paid), 0) AS rev FROM customer_entries WHERE ${whereClause} GROUP BY scheme_type ORDER BY rev DESC`,
+      params
+    );
+    const revenueByScheme = {};
+    const countByScheme = {};
+    schemeRes.rows.forEach(r => {
+      revenueByScheme[r.scheme_type] = parseFloat(r.rev);
+      countByScheme[r.scheme_type] = parseInt(r.cnt);
+    });
+
+    // Unique branch count
+    const branchCountRes = await pool.query(
+      `SELECT COUNT(DISTINCT branch_name) AS cnt FROM customer_entries WHERE ${whereClause}`,
+      params
+    );
+    const uniqueBranchCount = parseInt(branchCountRes.rows[0].cnt);
+
+    return res.json({
+      success: true,
+      totalEntries: parseInt(total_entries),
+      totalRevenue: parseFloat(total_revenue),
+      todayCount,
+      todayRevenue,
+      periodRevenue,
+      revenueByScheme,
+      countByScheme,
+      todayByScheme,
+      uniqueBranchCount,
+    });
+  } catch (e) {
+    console.error("Stats query error:", e.message);
     return res.status(500).json({ success: false, error: "Database error" });
   }
 });
@@ -330,7 +481,8 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
     higher_official, higher_official_emp_id, higher_official_role,
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
-    gold_package,
+    gold_package, gold_quantity,
+    proof_url,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
@@ -381,8 +533,8 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         higher_official=$13, higher_official_emp_id=$14, higher_official_role=$15,
         notes=$16,
         land_kind_of_payment=$17, land_site_name=$18, land_site_number=$19, land_layout=$20,
-        gold_package=$21, updated_at=NOW()
-      WHERE id=$22`,
+        gold_package=$21, gold_quantity=$22, proof_url=$23, updated_at=NOW()
+      WHERE id=$24`,
       [
         serialNumber, entry_date, normalizedBranch, customer_name,
         phone_number, Number(amount_paid), payment_mode, transaction_details || null,
@@ -391,7 +543,7 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         higher_official || null, higher_official_emp_id || null, higher_official_role || null,
         notes || null,
         land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
-        gold_package || null,
+        gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
         entryId,
       ]
     );
@@ -408,7 +560,7 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
 });
 
 // GET /api/users (management only)
-app.get("/api/users", authenticateToken, requireManagement, async (req, res) => {
+app.get("/api/users", authenticateToken, requireManagement, async (_req, res) => {
   try {
     const result = await pool.query(
       "SELECT id, email, branch_name, role FROM branch_users ORDER BY branch_name ASC"
@@ -491,6 +643,63 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
   } catch (e) {
     console.error("Follow-up error:", e.message);
     return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
+// POST /api/uploads/presign — generate S3 presigned POST URL for proof uploads
+const ALLOWED_CONTENT_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf"];
+const ALLOWED_PAYMENT_MODES  = ["GPay", "Bank"];
+
+app.post("/api/uploads/presign", authenticateToken, async (req, res) => {
+  const { filename, contentType, paymentMode } = req.body;
+
+  if (!ALLOWED_PAYMENT_MODES.includes(paymentMode))
+    return res.status(400).json({ success: false, error: "paymentMode must be GPay or Bank" });
+  if (!ALLOWED_CONTENT_TYPES.includes(contentType))
+    return res.status(400).json({ success: false, error: "Unsupported file type" });
+  if (!filename || typeof filename !== "string" || filename.length > 200)
+    return res.status(400).json({ success: false, error: "Invalid filename" });
+
+  const prefix    = paymentMode === "GPay" ? "gpay-proofs" : "Bank-proofs";
+  const sanitized = filename.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const key       = `${prefix}/${uuidv4()}-${sanitized}`;
+
+  try {
+    const { url, fields } = await createPresignedPost(s3, {
+      Bucket: S3_BUCKET,
+      Key: key,
+      Conditions: [
+        ["content-length-range", 0, 5 * 1024 * 1024],
+        ["eq", "$Content-Type", contentType],
+      ],
+      Fields: { "Content-Type": contentType },
+      Expires: 300,
+    });
+
+    const fileUrl = `https://${S3_BUCKET}.s3.${AWS_REGION}.amazonaws.com/${key}`;
+    return res.json({ success: true, uploadUrl: url, fields, fileUrl, key });
+  } catch (e) {
+    console.error("Presign error:", e.message);
+    return res.status(500).json({ success: false, error: "Could not generate upload URL" });
+  }
+});
+
+// GET /api/uploads/sign-get?key=... — return a short-lived signed GET URL for proof viewing
+app.get("/api/uploads/sign-get", authenticateToken, async (req, res) => {
+  const { key } = req.query;
+  if (!key || !/^(gpay-proofs|Bank-proofs)\/.+/.test(key))
+    return res.status(400).json({ success: false, error: "Invalid key" });
+
+  try {
+    const signedUrl = await getSignedUrl(
+      s3,
+      new GetObjectCommand({ Bucket: S3_BUCKET, Key: key }),
+      { expiresIn: 300 }
+    );
+    return res.json({ success: true, url: signedUrl });
+  } catch (e) {
+    console.error("Sign GET error:", e.message);
+    return res.status(500).json({ success: false, error: "Could not generate signed URL" });
   }
 });
 

@@ -54,7 +54,7 @@ const exportToCSV = (entries) => {
     "Referred By", "Referrer Emp ID", "Referrer Role",
     "Higher Official", "Official Emp ID", "Official Role",
     "Land Kind of Payment", "Land Site Name", "Land Layout", "Land Site Number",
-    "Gold Package", "Notes",
+    "Gold/Jewel Package", "Gold/Jewel Quantity", "Notes",
   ];
   const rows = entries.map(e => [
     e.serial_number || "", formatDateToDDMMYYYY(e.entry_date), e.branch_name || "",
@@ -63,7 +63,7 @@ const exportToCSV = (entries) => {
     e.referred_by || "", e.referred_by_emp_id || "", e.referred_by_role || "",
     e.higher_official || "", e.higher_official_emp_id || "", e.higher_official_role || "",
     e.land_kind_of_payment || "", e.land_site_name || "", e.land_layout || "", e.land_site_number || "",
-    e.gold_package || "", (e.notes || "").replace(/,/g, " "),
+    e.gold_package || "", e.gold_quantity || "", (e.notes || "").replace(/,/g, " "),
   ]);
   // Wrap date column (index 1) as Excel text formula ="DD/MM/YYYY" to prevent auto-formatting
   const csv = [
@@ -361,51 +361,72 @@ function Pagination({ total, page, pageSize, onPage, onPageSize }) {
 }
 
 // ── MD Dashboard ──────────────────────────────────────────────────────────────
-function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdFilterDateFrom, setMdFilterDateFrom, mdFilterDateTo, setMdFilterDateTo }) {
+function MDDashboard({ onLogout }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
+  const today = now.toLocaleDateString("en-CA");
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
-  const isFiltered = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
-  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130]);
+
+  const [filterBranch, setFilterBranch] = useState("");
+  const [dateFrom, setDateFrom]         = useState("");
+  const [dateTo, setDateTo]             = useState("");
+  const isFiltered = filterBranch || dateFrom || dateTo;
+  const clearFilters = () => { setFilterBranch(""); setDateFrom(""); setDateTo(""); };
+
+  const [stats, setStats]           = useState(null);
+  const [entries, setEntries]       = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [statsLoading, setStatsLoading]     = useState(true);
+  const [entriesLoading, setEntriesLoading] = useState(true);
+  const [exporting, setExporting]           = useState(false);
+
+  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 70, 185, 170, 170, 160, 130]);
   const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
+  const [pageSize, setPageSize]       = useState(50);
 
-  useEffect(() => { setCurrentPage(1); }, [mdFilterBranch, mdFilterDateFrom, mdFilterDateTo]);
+  useEffect(() => { setCurrentPage(1); }, [filterBranch, dateFrom, dateTo]);
 
-  const paginatedEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+  const baseParams = () =>
+    `branch=ALL${filterBranch ? `&filterBranch=${encodeURIComponent(filterBranch)}` : ""}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`;
 
-  // All stats derived from the already-filtered entries array
-  const totalEntries = entries.length;
-  const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+  useEffect(() => {
+    setStatsLoading(true);
+    fetch(`${API_BASE}/entries/stats?${baseParams()}&today=${today}&periodStart=${periodStart}&periodEnd=${periodEnd}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setStats(d); })
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
+  }, [filterBranch, dateFrom, dateTo]);
 
-  // Filter by entry_date (form date) for all dashboard stats
-  const todayEntries = entries.filter(e => String(e.entry_date).slice(0, 10) === today);
-  const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayCount = todayEntries.length;
+  useEffect(() => {
+    setEntriesLoading(true);
+    fetch(`${API_BASE}/entries?${baseParams()}&page=${currentPage}&pageSize=${pageSize}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) { setEntries(d.data); setTotalCount(d.totalCount || 0); } })
+      .catch(() => {})
+      .finally(() => setEntriesLoading(false));
+  }, [filterBranch, dateFrom, dateTo, currentPage, pageSize]);
 
-  const thisMonthRevenue = entries
-    .filter(e => { const d = String(e.entry_date).slice(0, 10); return d >= periodStart && d <= periodEnd; })
-    .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const res  = await fetch(`${API_BASE}/entries?${baseParams()}`);
+      const data = await res.json();
+      if (data.success) exportToCSV(data.data);
+    } catch {}
+    setExporting(false);
+  };
 
-  const revenueByScheme = {};
-  const countByScheme = {};
-  entries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    revenueByScheme[e.scheme_type] = (revenueByScheme[e.scheme_type] || 0) + amt;
-    countByScheme[e.scheme_type] = (countByScheme[e.scheme_type] || 0) + 1;
-  });
-
-  const todayByScheme = {};
-  todayEntries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    todayByScheme[e.scheme_type] = (todayByScheme[e.scheme_type] || 0) + amt;
-  });
-
-  const uniqueBranchCount = new Set(entries.map(e => e.branch_name).filter(Boolean)).size;
-  const schemeCount = Object.keys(revenueByScheme).length;
-
-  const clearFilters = () => { setMdFilterBranch(""); setMdFilterDateFrom(""); setMdFilterDateTo(""); };
+  const totalEntries      = stats?.totalEntries    ?? 0;
+  const totalRevenue      = stats?.totalRevenue    ?? 0;
+  const todayCount        = stats?.todayCount      ?? 0;
+  const todayRevenue      = stats?.todayRevenue    ?? 0;
+  const thisMonthRevenue  = stats?.periodRevenue   ?? 0;
+  const revenueByScheme   = stats?.revenueByScheme ?? {};
+  const countByScheme     = stats?.countByScheme   ?? {};
+  const todayByScheme     = stats?.todayByScheme   ?? {};
+  const uniqueBranchCount = stats?.uniqueBranchCount ?? 0;
+  const schemeCount       = Object.keys(revenueByScheme).length;
 
   return (
     <div className="admin-layout">
@@ -439,18 +460,18 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
           <div className="admin-filter-controls">
             <div className="field-group" style={{ minWidth: "180px", flex: 1 }}>
               <label className="field-label">Branch</label>
-              <select className="field-input" value={mdFilterBranch} onChange={e => setMdFilterBranch(e.target.value)}>
+              <select className="field-input" value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
                 <option value="">All Branches</option>
                 {branches.map(b => <option key={b} value={b}>{b}</option>)}
               </select>
             </div>
             <div className="field-group" style={{ minWidth: "150px", flex: 1 }}>
               <label className="field-label">From Date</label>
-              <input type="date" className="field-input" value={mdFilterDateFrom} onChange={e => setMdFilterDateFrom(e.target.value)} />
+              <input type="date" className="field-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
             </div>
             <div className="field-group" style={{ minWidth: "150px", flex: 1 }}>
               <label className="field-label">To Date</label>
-              <input type="date" className="field-input" value={mdFilterDateTo} onChange={e => setMdFilterDateTo(e.target.value)} />
+              <input type="date" className="field-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
             </div>
             {isFiltered && (
               <button className="admin-clear-btn" onClick={clearFilters}>✕ Clear</button>
@@ -465,7 +486,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
               <span className="kpi-icon-wrap kpi-icon-blue">📋</span>
               <span className="kpi-badge">{isFiltered ? "Filtered" : "All time"}</span>
             </div>
-            <div className="kpi-value">{totalEntries.toLocaleString()}</div>
+            <div className="kpi-value">{statsLoading ? "…" : totalEntries.toLocaleString()}</div>
             <div className="kpi-label">Total Entries</div>
           </div>
           <div className="kpi-card" data-color="purple">
@@ -473,7 +494,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
               <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
               <span className="kpi-badge">{isFiltered ? monthName : "All time"}</span>
             </div>
-            <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
+            <div className="kpi-value">₹{statsLoading ? "…" : (isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
             <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
           </div>
           <div className="kpi-card" data-color="green">
@@ -481,7 +502,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
               <span className="kpi-icon-wrap kpi-icon-green">💰</span>
               <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
             </div>
-            <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+            <div className="kpi-value">₹{statsLoading ? "…" : (isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
             <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
           </div>
           <div className="kpi-card" data-color="orange">
@@ -489,7 +510,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
               <span className="kpi-icon-wrap kpi-icon-orange">⚡</span>
               <span className="kpi-badge">{todayCount} entries</span>
             </div>
-            <div className="kpi-value">₹{todayRevenue.toLocaleString()}</div>
+            <div className="kpi-value">₹{statsLoading ? "…" : todayRevenue.toLocaleString()}</div>
             <div className="kpi-label">Today's Revenue</div>
           </div>
         </div>
@@ -506,13 +527,13 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
               </div>
             </div>
             {schemeCount === 0 ? (
-              <div className="admin-empty">No revenue data yet.</div>
+              <div className="admin-empty">{statsLoading ? "Loading…" : "No revenue data yet."}</div>
             ) : (
               <div className="scheme-list">
                 {Object.entries(revenueByScheme)
                   .sort(([, a], [, b]) => b - a)
                   .map(([scheme, total]) => {
-                    const pct = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
+                    const pct   = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
                     const color = SCHEME_COLORS[scheme] || "#6b7280";
                     return (
                       <div key={scheme} className="scheme-row">
@@ -556,7 +577,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
             <div className="today-section">
               <div className="today-section-title">Today by Scheme</div>
               {Object.keys(todayByScheme).length === 0 ? (
-                <div className="admin-empty-sm">No entries recorded today.</div>
+                <div className="admin-empty-sm">{statsLoading ? "Loading…" : "No entries recorded today."}</div>
               ) : (
                 <div className="today-list">
                   {Object.entries(todayByScheme)
@@ -580,22 +601,24 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
             <div>
               <div className="admin-panel-title">
                 All Entries
-                <span className="entry-count-badge">{totalEntries}</span>
+                <span className="entry-count-badge">{totalCount}</span>
               </div>
               <div className="admin-panel-sub">
                 {isFiltered
-                  ? [mdFilterBranch || "All Branches", mdFilterDateFrom && `From ${mdFilterDateFrom}`, mdFilterDateTo && `To ${mdFilterDateTo}`].filter(Boolean).join(" · ")
+                  ? [filterBranch || "All Branches", dateFrom && `From ${dateFrom}`, dateTo && `To ${dateTo}`].filter(Boolean).join(" · ")
                   : "All branches · All time"}
               </div>
             </div>
-            {totalEntries > 0 && (
-              <button className="export-btn" onClick={() => exportToCSV(entries)}>
-                📥 Export CSV
+            {totalCount > 0 && (
+              <button className="export-btn" onClick={handleExportCSV} disabled={exporting}>
+                {exporting ? "Exporting…" : "📥 Export CSV"}
               </button>
             )}
           </div>
 
-          {totalEntries === 0 ? (
+          {entriesLoading ? (
+            <div className="admin-empty" style={{ padding: "3rem" }}>Loading entries…</div>
+          ) : totalCount === 0 ? (
             <div className="admin-empty" style={{ padding: "3rem" }}>
               No entries found. Adjust filters or add data from a branch.
             </div>
@@ -607,7 +630,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                 </colgroup>
                 <thead>
                   <tr>
-                    {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes"].map((h, i) => (
+                    {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Proof", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes"].map((h, i) => (
                       <th key={h} style={{ position: "relative" }}>
                         {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
                       </th>
@@ -615,11 +638,11 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedEntries.map((e, idx) => {
-                    const color = SCHEME_COLORS[e.scheme_type] || "#6b7280";
+                  {entries.map((e, idx) => {
+                    const color   = SCHEME_COLORS[e.scheme_type] || "#6b7280";
                     const landInfo = e.land_kind_of_payment
                       ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
-                      : e.gold_package ? `Gold: ${e.gold_package}` : "-";
+                      : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
                     return (
                       <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                         <td className="td-mono">{e.serial_number || "-"}</td>
@@ -633,6 +656,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                             {e.payment_mode}
                           </span>
                         </td>
+                        <td><ProofLink proofUrl={e.proof_url} /></td>
                         <td>
                           <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                             {e.scheme_type}
@@ -652,7 +676,7 @@ function MDDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdF
                 </tbody>
               </table>
               <Pagination
-                total={totalEntries}
+                total={totalCount}
                 page={currentPage}
                 pageSize={pageSize}
                 onPage={setCurrentPage}
@@ -685,6 +709,90 @@ function ConfirmDialog({ title, message, onConfirm, onCancel, loading }) {
   );
 }
 
+// ── Proof Uploader ────────────────────────────────────────────────────────────
+const PROOF_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf"];
+const PROOF_MAX_BYTES = 5 * 1024 * 1024;
+
+// pendingFile = File object (not yet uploaded), existingUrl = already-saved S3 URL
+function ProofUploader({ paymentMode, pendingFile, existingUrl, onFileChange, onClear }) {
+  const [error, setError] = useState("");
+  const inputRef = useRef(null);
+
+  const handleChange = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    setError("");
+    if (file.size > PROOF_MAX_BYTES) {
+      setError("File must be under 5 MB");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+    if (!PROOF_ALLOWED_TYPES.includes(file.type)) {
+      setError("Only images (PNG, JPG, WebP, GIF) and PDFs are allowed");
+      if (inputRef.current) inputRef.current.value = "";
+      return;
+    }
+    onFileChange(file);
+  };
+
+  const handleClear = () => {
+    onClear();
+    setError("");
+    if (inputRef.current) inputRef.current.value = "";
+  };
+
+  const displayName = pendingFile
+    ? pendingFile.name
+    : (existingUrl ? (existingUrl.split("/").pop().slice(37) || existingUrl.split("/").pop()) : "");
+  const hasSelection = !!pendingFile || !!existingUrl;
+
+  return (
+    <div className="proof-uploader">
+      <div className="field-label">
+        Payment Proof <span style={{ color: "#dc2626" }}>*</span>
+      </div>
+      {hasSelection ? (
+        <div className="proof-chip">
+          <span className="proof-filename">{displayName}</span>
+          <button type="button" className="proof-remove-btn" onClick={handleClear}>&times;</button>
+        </div>
+      ) : (
+        <label className="proof-upload-label">
+          <>📎 Choose {paymentMode} proof (image or PDF, max 5 MB)</>
+          <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+            onChange={handleChange} style={{ display: "none" }} />
+        </label>
+      )}
+      {error && <div className="proof-error">{error}</div>}
+    </div>
+  );
+}
+
+// ── Proof Link (view signed S3 URL) ──────────────────────────────────────────
+function ProofLink({ proofUrl }) {
+  const [loading, setLoading] = useState(false);
+  if (!proofUrl) return <span style={{ color: "var(--text-muted)" }}>-</span>;
+
+  const handleView = async () => {
+    setLoading(true);
+    try {
+      const token = localStorage.getItem("token");
+      const key   = proofUrl.replace(/^https?:\/\/[^/]+\//, "");
+      const res   = await fetch(`${API_BASE}/uploads/sign-get?key=${encodeURIComponent(key)}`, {
+        headers: { "Authorization": `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (data.success) window.open(data.url, "_blank", "noopener,noreferrer");
+    } finally { setLoading(false); }
+  };
+
+  return (
+    <button className="proof-view-btn" onClick={handleView} disabled={loading}>
+      {loading ? "…" : "View"}
+    </button>
+  );
+}
+
 // ── Edit Entry Modal ─────────────────────────────────────────────────────────
 function EditEntryModal({ entry, onClose, onSave, token }) {
   const [form, setForm] = useState({
@@ -708,24 +816,50 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
     land_layout: entry.land_layout || "",
     land_site_number: entry.land_site_number || "",
     gold_package: entry.gold_package || "",
+    gold_quantity: entry.gold_quantity || "",
+    proof_url: entry.proof_url || "",
   });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState("");
+  const [saving, setSaving]               = useState(false);
+  const [error, setError]                 = useState("");
+  const [pendingProofFile, setPendingProofFile] = useState(null);
 
   const set = (field) => (e) => setForm(prev => ({
     ...prev,
     [field]: e.target.value,
-    ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "" } : {}),
+    ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "", gold_quantity: "" } : {}),
     ...(field === "land_site_name" ? { land_layout: "" } : {}),
+    ...(field === "payment_mode" && e.target.value === "Cash" ? { proof_url: "" } : {}),
+    ...(field === "gold_package" && e.target.value !== "Single" ? { gold_quantity: "" } : {}),
   }));
 
   const handleSave = async () => {
     setSaving(true); setError("");
+
+    let proofUrl = form.proof_url || null;
+    if (pendingProofFile) {
+      try {
+        const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+          body: JSON.stringify({ filename: pendingProofFile.name, contentType: pendingProofFile.type, paymentMode: form.payment_mode }),
+        });
+        const presignData = await presignRes.json();
+        if (!presignData.success) { setError(presignData.error || "Failed to prepare upload"); setSaving(false); return; }
+        const { uploadUrl, fields, fileUrl } = presignData;
+        const fd = new FormData();
+        Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+        fd.append("file", pendingProofFile);
+        const uploadRes = await fetch(uploadUrl, { method: "POST", body: fd });
+        if (!uploadRes.ok) { setError("Proof upload failed. Please try again."); setSaving(false); return; }
+        proofUrl = fileUrl;
+      } catch { setError("Upload error. Check your connection."); setSaving(false); return; }
+    }
+
     try {
       const res = await fetch(`${API_BASE}/entries/${entry.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify(form),
+        body: JSON.stringify({ ...form, proof_url: proofUrl }),
       });
       const data = await res.json();
       if (data.success) { onSave(); onClose(); }
@@ -754,10 +888,24 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
           <TextInput label="Amount Paid" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
-          <SelectInput label="Payment Mode" required value={form.payment_mode} onChange={set("payment_mode")} options={["Cash", "Bank", "GPay"]} />
+          <SelectInput label="Payment Mode" required value={form.payment_mode}
+            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setPendingProofFile(null); }}
+            options={["Cash", "Bank", "GPay"]} />
           <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
           <SelectInput label="Scheme Type" required value={form.scheme_type} onChange={set("scheme_type")} options={schemes} />
         </div>
+
+        {(form.payment_mode === "GPay" || form.payment_mode === "Bank") && (
+          <div style={{ marginTop: "1rem" }}>
+            <ProofUploader
+              paymentMode={form.payment_mode}
+              pendingFile={pendingProofFile}
+              existingUrl={form.proof_url}
+              onFileChange={setPendingProofFile}
+              onClear={() => { setPendingProofFile(null); setForm(f => ({ ...f, proof_url: "" })); }}
+            />
+          </div>
+        )}
 
         <SectionTitle icon="🤝" title="Reference & Officials" />
         <div className="grid-2">
@@ -802,6 +950,17 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
             <SectionTitle icon="💎" title="Gold / Jewel Savings Details" />
             <div className="grid-2">
               <SelectInput label="Package" value={form.gold_package} onChange={set("gold_package")} options={["Single", "Full"]} />
+              {form.gold_package === "Single" && (
+                <TextInput
+                  label="Quantity"
+                  type="number"
+                  value={form.gold_quantity}
+                  onChange={set("gold_quantity")}
+                  min="1"
+                  max={form.scheme_type === "GOLD COIN SAVINGS" ? 15 : 19}
+                  placeholder={`1 – ${form.scheme_type === "GOLD COIN SAVINGS" ? 15 : 19}`}
+                />
+              )}
             </div>
           </div>
         )}
@@ -935,14 +1094,38 @@ function UserManagementPanel({ token }) {
 }
 
 // ── Management Dashboard ─────────────────────────────────────────────────────
-function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBranch, mdFilterDateFrom, setMdFilterDateFrom, mdFilterDateTo, setMdFilterDateTo, token, onEntriesChange }) {
-  const [activeTab, setActiveTab] = useState("dashboard");
-  const [editingEntry, setEditingEntry] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
-  const [deleting, setDeleting] = useState(false);
-  const [feedback, setFeedback] = useState(null);
+function ManagementDashboard({ onLogout, token }) {
+  const now = new Date();
+  const today = now.toLocaleDateString("en-CA");
+  const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
+  const monthName = periodLabel;
 
-  // Auto-clear feedback toast
+  const [filterBranch, setFilterBranch] = useState("");
+  const [dateFrom, setDateFrom]         = useState("");
+  const [dateTo, setDateTo]             = useState("");
+  const isFiltered = filterBranch || dateFrom || dateTo;
+  const clearFilters = () => { setFilterBranch(""); setDateFrom(""); setDateTo(""); };
+
+  const [stats, setStats]           = useState(null);
+  const [entries, setEntries]       = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [statsLoading, setStatsLoading]     = useState(true);
+  const [entriesLoading, setEntriesLoading] = useState(true);
+  const [exporting, setExporting]           = useState(false);
+  const [refetchKey, setRefetchKey]         = useState(0);
+
+  const [activeTab, setActiveTab]         = useState("dashboard");
+  const [editingEntry, setEditingEntry]   = useState(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [deleting, setDeleting]           = useState(false);
+  const [feedback, setFeedback]           = useState(null);
+
+  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 70, 185, 170, 170, 160, 130, 110]);
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize]       = useState(50);
+
+  useEffect(() => { setCurrentPage(1); }, [filterBranch, dateFrom, dateTo]);
+
   useEffect(() => {
     if (feedback) {
       const t = setTimeout(() => setFeedback(null), 3000);
@@ -950,17 +1133,50 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
     }
   }, [feedback]);
 
+  const baseParams = () =>
+    `branch=ALL${filterBranch ? `&filterBranch=${encodeURIComponent(filterBranch)}` : ""}${dateFrom ? `&date_from=${dateFrom}` : ""}${dateTo ? `&date_to=${dateTo}` : ""}`;
+
+  useEffect(() => {
+    setStatsLoading(true);
+    fetch(`${API_BASE}/entries/stats?${baseParams()}&today=${today}&periodStart=${periodStart}&periodEnd=${periodEnd}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setStats(d); })
+      .catch(() => {})
+      .finally(() => setStatsLoading(false));
+  }, [filterBranch, dateFrom, dateTo, refetchKey]);
+
+  useEffect(() => {
+    setEntriesLoading(true);
+    fetch(`${API_BASE}/entries?${baseParams()}&page=${currentPage}&pageSize=${pageSize}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) { setEntries(d.data); setTotalCount(d.totalCount || 0); } })
+      .catch(() => {})
+      .finally(() => setEntriesLoading(false));
+  }, [filterBranch, dateFrom, dateTo, currentPage, pageSize, refetchKey]);
+
+  const refetchAll = () => setRefetchKey(k => k + 1);
+
+  const handleExportCSV = async () => {
+    setExporting(true);
+    try {
+      const res  = await fetch(`${API_BASE}/entries?${baseParams()}`);
+      const data = await res.json();
+      if (data.success) exportToCSV(data.data);
+    } catch {}
+    setExporting(false);
+  };
+
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res = await fetch(`${API_BASE}/entries/${deleteConfirm.id}`, {
+      const res  = await fetch(`${API_BASE}/entries/${deleteConfirm.id}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` },
       });
       const data = await res.json();
       if (data.success) {
         setFeedback({ type: "success", msg: "Entry deleted successfully" });
-        onEntriesChange();
+        refetchAll();
       } else {
         setFeedback({ type: "error", msg: data.error });
       }
@@ -969,47 +1185,16 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
     setDeleting(false);
   };
 
-  const now = new Date();
-  const today = now.toLocaleDateString("en-CA");
-  const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
-  const monthName = periodLabel;
-  const isFiltered = mdFilterBranch || mdFilterDateFrom || mdFilterDateTo;
-  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130, 110]);
-  const [currentPage, setCurrentPage] = useState(1);
-  const [pageSize, setPageSize] = useState(50);
-
-  useEffect(() => { setCurrentPage(1); }, [mdFilterBranch, mdFilterDateFrom, mdFilterDateTo]);
-
-  const paginatedEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
-  const totalEntries = entries.length;
-  const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayEntries = entries.filter(e => String(e.entry_date).slice(0, 10) === today);
-  const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayCount = todayEntries.length;
-
-  const thisMonthRevenue = entries
-    .filter(e => { const d = String(e.entry_date).slice(0, 10); return d >= periodStart && d <= periodEnd; })
-    .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-
-  const revenueByScheme = {};
-  const countByScheme = {};
-  entries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    revenueByScheme[e.scheme_type] = (revenueByScheme[e.scheme_type] || 0) + amt;
-    countByScheme[e.scheme_type] = (countByScheme[e.scheme_type] || 0) + 1;
-  });
-
-  const todayByScheme = {};
-  todayEntries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    todayByScheme[e.scheme_type] = (todayByScheme[e.scheme_type] || 0) + amt;
-  });
-
-  const uniqueBranchCount = new Set(entries.map(e => e.branch_name).filter(Boolean)).size;
-  const schemeCount = Object.keys(revenueByScheme).length;
-
-  const clearFilters = () => { setMdFilterBranch(""); setMdFilterDateFrom(""); setMdFilterDateTo(""); };
+  const totalEntries      = stats?.totalEntries    ?? 0;
+  const totalRevenue      = stats?.totalRevenue    ?? 0;
+  const todayCount        = stats?.todayCount      ?? 0;
+  const todayRevenue      = stats?.todayRevenue    ?? 0;
+  const thisMonthRevenue  = stats?.periodRevenue   ?? 0;
+  const revenueByScheme   = stats?.revenueByScheme ?? {};
+  const countByScheme     = stats?.countByScheme   ?? {};
+  const todayByScheme     = stats?.todayByScheme   ?? {};
+  const uniqueBranchCount = stats?.uniqueBranchCount ?? 0;
+  const schemeCount       = Object.keys(revenueByScheme).length;
 
   return (
     <div className="admin-layout">
@@ -1023,7 +1208,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
         <EditEntryModal
           entry={editingEntry}
           onClose={() => setEditingEntry(null)}
-          onSave={() => { setFeedback({ type: "success", msg: "Entry updated successfully" }); onEntriesChange(); }}
+          onSave={() => { setFeedback({ type: "success", msg: "Entry updated successfully" }); refetchAll(); }}
           token={token}
         />
       )}
@@ -1082,18 +1267,18 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
               <div className="admin-filter-controls">
                 <div className="field-group" style={{ minWidth: "180px", flex: 1 }}>
                   <label className="field-label">Branch</label>
-                  <select className="field-input" value={mdFilterBranch} onChange={e => setMdFilterBranch(e.target.value)}>
+                  <select className="field-input" value={filterBranch} onChange={e => setFilterBranch(e.target.value)}>
                     <option value="">All Branches</option>
                     {branches.map(b => <option key={b} value={b}>{b}</option>)}
                   </select>
                 </div>
                 <div className="field-group" style={{ minWidth: "150px", flex: 1 }}>
                   <label className="field-label">From Date</label>
-                  <input type="date" className="field-input" value={mdFilterDateFrom} onChange={e => setMdFilterDateFrom(e.target.value)} />
+                  <input type="date" className="field-input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
                 </div>
                 <div className="field-group" style={{ minWidth: "150px", flex: 1 }}>
                   <label className="field-label">To Date</label>
-                  <input type="date" className="field-input" value={mdFilterDateTo} onChange={e => setMdFilterDateTo(e.target.value)} />
+                  <input type="date" className="field-input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
                 </div>
                 {isFiltered && (
                   <button className="admin-clear-btn" onClick={clearFilters}>✕ Clear</button>
@@ -1108,7 +1293,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                   <span className="kpi-icon-wrap kpi-icon-blue">📋</span>
                   <span className="kpi-badge">{isFiltered ? "Filtered" : "All time"}</span>
                 </div>
-                <div className="kpi-value">{totalEntries.toLocaleString()}</div>
+                <div className="kpi-value">{statsLoading ? "…" : totalEntries.toLocaleString()}</div>
                 <div className="kpi-label">Total Entries</div>
               </div>
               <div className="kpi-card" data-color="purple">
@@ -1116,7 +1301,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                   <span className="kpi-icon-wrap kpi-icon-purple">📅</span>
                   <span className="kpi-badge">{isFiltered ? monthName : "All time"}</span>
                 </div>
-                <div className="kpi-value">₹{(isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
+                <div className="kpi-value">₹{statsLoading ? "…" : (isFiltered ? thisMonthRevenue : totalRevenue).toLocaleString()}</div>
                 <div className="kpi-label">{isFiltered ? "This Period" : "All Time Revenue"}</div>
               </div>
               <div className="kpi-card" data-color="green">
@@ -1124,7 +1309,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                   <span className="kpi-icon-wrap kpi-icon-green">💰</span>
                   <span className="kpi-badge">{isFiltered ? "Filtered" : monthName}</span>
                 </div>
-                <div className="kpi-value">₹{(isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
+                <div className="kpi-value">₹{statsLoading ? "…" : (isFiltered ? totalRevenue : thisMonthRevenue).toLocaleString()}</div>
                 <div className="kpi-label">{isFiltered ? "Filtered Revenue" : "Period Revenue"}</div>
               </div>
               <div className="kpi-card" data-color="orange">
@@ -1132,7 +1317,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                   <span className="kpi-icon-wrap kpi-icon-orange">⚡</span>
                   <span className="kpi-badge">{todayCount} entries</span>
                 </div>
-                <div className="kpi-value">₹{todayRevenue.toLocaleString()}</div>
+                <div className="kpi-value">₹{statsLoading ? "…" : todayRevenue.toLocaleString()}</div>
                 <div className="kpi-label">Today's Revenue</div>
               </div>
             </div>
@@ -1147,13 +1332,13 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                   </div>
                 </div>
                 {schemeCount === 0 ? (
-                  <div className="admin-empty">No revenue data yet.</div>
+                  <div className="admin-empty">{statsLoading ? "Loading…" : "No revenue data yet."}</div>
                 ) : (
                   <div className="scheme-list">
                     {Object.entries(revenueByScheme)
                       .sort(([, a], [, b]) => b - a)
                       .map(([scheme, total]) => {
-                        const pct = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
+                        const pct   = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
                         const color = SCHEME_COLORS[scheme] || "#6b7280";
                         return (
                           <div key={scheme} className="scheme-row">
@@ -1195,7 +1380,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                 <div className="today-section">
                   <div className="today-section-title">Today by Scheme</div>
                   {Object.keys(todayByScheme).length === 0 ? (
-                    <div className="admin-empty-sm">No entries recorded today.</div>
+                    <div className="admin-empty-sm">{statsLoading ? "Loading…" : "No entries recorded today."}</div>
                   ) : (
                     <div className="today-list">
                       {Object.entries(todayByScheme)
@@ -1219,22 +1404,24 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                 <div>
                   <div className="admin-panel-title">
                     All Entries
-                    <span className="entry-count-badge">{totalEntries}</span>
+                    <span className="entry-count-badge">{totalCount}</span>
                   </div>
                   <div className="admin-panel-sub">
                     {isFiltered
-                      ? [mdFilterBranch || "All Branches", mdFilterDateFrom && `From ${mdFilterDateFrom}`, mdFilterDateTo && `To ${mdFilterDateTo}`].filter(Boolean).join(" · ")
+                      ? [filterBranch || "All Branches", dateFrom && `From ${dateFrom}`, dateTo && `To ${dateTo}`].filter(Boolean).join(" · ")
                       : "All branches · All time"}
                   </div>
                 </div>
-                {totalEntries > 0 && (
-                  <button className="export-btn" onClick={() => exportToCSV(entries)}>
-                    📥 Export CSV
+                {totalCount > 0 && (
+                  <button className="export-btn" onClick={handleExportCSV} disabled={exporting}>
+                    {exporting ? "Exporting…" : "📥 Export CSV"}
                   </button>
                 )}
               </div>
 
-              {totalEntries === 0 ? (
+              {entriesLoading ? (
+                <div className="admin-empty" style={{ padding: "3rem" }}>Loading entries…</div>
+              ) : totalCount === 0 ? (
                 <div className="admin-empty" style={{ padding: "3rem" }}>
                   No entries found. Adjust filters or add data from a branch.
                 </div>
@@ -1246,7 +1433,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                     </colgroup>
                     <thead>
                       <tr>
-                        {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes", "Actions"].map((h, i) => (
+                        {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Proof", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes", "Actions"].map((h, i) => (
                           <th key={h} style={{ position: "relative" }}>
                             {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
                           </th>
@@ -1254,11 +1441,11 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                       </tr>
                     </thead>
                     <tbody>
-                      {paginatedEntries.map((e, idx) => {
-                        const color = SCHEME_COLORS[e.scheme_type] || "#6b7280";
+                      {entries.map((e, idx) => {
+                        const color    = SCHEME_COLORS[e.scheme_type] || "#6b7280";
                         const landInfo = e.land_kind_of_payment
                           ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
-                          : e.gold_package ? `Gold: ${e.gold_package}` : "-";
+                          : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
                         return (
                           <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                             <td className="td-mono">{e.serial_number || "-"}</td>
@@ -1272,6 +1459,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                                 {e.payment_mode}
                               </span>
                             </td>
+                            <td><ProofLink proofUrl={e.proof_url} /></td>
                             <td>
                               <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                                 {e.scheme_type}
@@ -1295,7 +1483,7 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
                     </tbody>
                   </table>
                   <Pagination
-                    total={totalEntries}
+                    total={totalCount}
                     page={currentPage}
                     pageSize={pageSize}
                     onPage={setCurrentPage}
@@ -1312,52 +1500,79 @@ function ManagementDashboard({ entries, onLogout, mdFilterBranch, setMdFilterBra
 }
 
 // ── Director Dashboard ────────────────────────────────────────────────────────
-function DirectorDashboard({ entries, onLogout, directorBranches, directorName, filterBranch, setFilterBranch, filterDateFrom, setFilterDateFrom, filterDateTo, setFilterDateTo }) {
+function DirectorDashboard({ onLogout, directorBranches, directorName }) {
   const now = new Date();
   const today = now.toLocaleDateString("en-CA");
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
-  const isFiltered = filterBranch || filterDateFrom || filterDateTo;
-  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 185, 170, 170, 160, 130]);
+
+  // Self-managed state
+  const [filterBranch, setFilterBranch] = useState("");
+  const [filterDateFrom, setFilterDateFrom] = useState(periodStart);
+  const [filterDateTo, setFilterDateTo] = useState(periodEnd);
+  const [entries, setEntries] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [stats, setStats] = useState(null);
+  const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(50);
+  const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 70, 185, 170, 170, 160, 130]);
 
+  const isFiltered = filterBranch || filterDateFrom || filterDateTo;
+  const myBranches = directorBranches || [];
+  const branchesParam = myBranches.join(",");
+
+  // Build common query string for director branch + date filters
+  const buildFilterQS = () => {
+    let qs = `directorBranches=${encodeURIComponent(branchesParam)}`;
+    if (filterBranch) qs += `&filterBranch=${encodeURIComponent(filterBranch)}`;
+    if (filterDateFrom) qs += `&date_from=${filterDateFrom}`;
+    if (filterDateTo) qs += `&date_to=${filterDateTo}`;
+    return qs;
+  };
+
+  // Fetch paginated entries
+  useEffect(() => {
+    setLoading(true);
+    const url = `${API_BASE}/entries?${buildFilterQS()}&page=${currentPage}&pageSize=${pageSize}`;
+    fetch(url).then(r => r.json()).then(data => {
+      if (data.success) { setEntries(data.data); setTotalCount(data.totalCount || 0); }
+    }).catch(() => {}).finally(() => setLoading(false));
+  }, [filterBranch, filterDateFrom, filterDateTo, currentPage, pageSize]);
+
+  // Fetch stats (lightweight aggregates)
+  useEffect(() => {
+    const qs = buildFilterQS();
+    const url = `${API_BASE}/entries/stats?${qs}&today=${today}&periodStart=${periodStart}&periodEnd=${periodEnd}`;
+    fetch(url).then(r => r.json()).then(data => { if (data.success) setStats(data); }).catch(() => {});
+  }, [filterBranch, filterDateFrom, filterDateTo]);
+
+  // Reset page when filters change
   useEffect(() => { setCurrentPage(1); }, [filterBranch, filterDateFrom, filterDateTo]);
 
-  const paginatedEntries = entries.slice((currentPage - 1) * pageSize, currentPage * pageSize);
-
-  const totalEntries = entries.length;
-  const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-
-  const todayEntries = entries.filter(e => String(e.entry_date).slice(0, 10) === today);
-  const todayRevenue = todayEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayCount = todayEntries.length;
-
-  const thisMonthRevenue = entries
-    .filter(e => { const d = String(e.entry_date).slice(0, 10); return d >= periodStart && d <= periodEnd; })
-    .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-
-  const revenueByScheme = {};
-  const countByScheme = {};
-  entries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    revenueByScheme[e.scheme_type] = (revenueByScheme[e.scheme_type] || 0) + amt;
-    countByScheme[e.scheme_type] = (countByScheme[e.scheme_type] || 0) + 1;
-  });
-
-  const todayByScheme = {};
-  todayEntries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    todayByScheme[e.scheme_type] = (todayByScheme[e.scheme_type] || 0) + amt;
-  });
-
-  const uniqueBranchCount = new Set(entries.map(e => e.branch_name).filter(Boolean)).size;
-  const schemeCount = Object.keys(revenueByScheme).length;
+  // Export ALL matching entries (no pagination)
+  const handleExport = async () => {
+    try {
+      const url = `${API_BASE}/entries?${buildFilterQS()}`;
+      const res = await fetch(url);
+      const data = await res.json();
+      if (data.success) exportToCSV(data.data);
+    } catch { alert("Export failed"); }
+  };
 
   const clearFilters = () => { setFilterBranch(""); setFilterDateFrom(""); setFilterDateTo(""); };
 
-  // Director's branches for the branch filter dropdown
-  const myBranches = directorBranches || [];
+  // Derive display values from stats
+  const totalEntries = stats?.totalEntries || 0;
+  const totalRevenue = stats?.totalRevenue || 0;
+  const todayCount = stats?.todayCount || 0;
+  const todayRevenue = stats?.todayRevenue || 0;
+  const thisMonthRevenue = stats?.periodRevenue || 0;
+  const revenueByScheme = stats?.revenueByScheme || {};
+  const countByScheme = stats?.countByScheme || {};
+  const todayByScheme = stats?.todayByScheme || {};
+  const uniqueBranchCount = stats?.uniqueBranchCount || 0;
+  const schemeCount = Object.keys(revenueByScheme).length;
 
   return (
     <div className="admin-layout">
@@ -1532,7 +1747,7 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
             <div>
               <div className="admin-panel-title">
                 All Entries
-                <span className="entry-count-badge">{totalEntries}</span>
+                <span className="entry-count-badge">{totalCount}</span>
               </div>
               <div className="admin-panel-sub">
                 {isFiltered
@@ -1540,14 +1755,14 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
                   : `All my branches · All time`}
               </div>
             </div>
-            {totalEntries > 0 && (
-              <button className="export-btn" onClick={() => exportToCSV(entries)}>
+            {totalCount > 0 && (
+              <button className="export-btn" onClick={handleExport}>
                 📥 Export CSV
               </button>
             )}
           </div>
 
-          {totalEntries === 0 ? (
+          {totalCount === 0 && !loading ? (
             <div className="admin-empty" style={{ padding: "3rem" }}>
               No entries found. Adjust filters or wait for branch data.
             </div>
@@ -1559,7 +1774,7 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
                 </colgroup>
                 <thead>
                   <tr>
-                    {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes"].map((h, i) => (
+                    {["S.No", "Date", "Branch", "Customer", "Phone", "Amount", "Mode", "Proof", "Scheme", "Referred By", "Higher Official", "Land / Gold", "Notes"].map((h, i) => (
                       <th key={h} style={{ position: "relative" }}>
                         {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
                       </th>
@@ -1567,11 +1782,11 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
                   </tr>
                 </thead>
                 <tbody>
-                  {paginatedEntries.map((e, idx) => {
+                  {entries.map((e, idx) => {
                     const color = SCHEME_COLORS[e.scheme_type] || "#6b7280";
                     const landInfo = e.land_kind_of_payment
                       ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
-                      : e.gold_package ? `Gold: ${e.gold_package}` : "-";
+                      : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
                     return (
                       <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                         <td className="td-mono">{e.serial_number || "-"}</td>
@@ -1585,6 +1800,7 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
                             {e.payment_mode}
                           </span>
                         </td>
+                        <td><ProofLink proofUrl={e.proof_url} /></td>
                         <td>
                           <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                             {e.scheme_type}
@@ -1604,7 +1820,7 @@ function DirectorDashboard({ entries, onLogout, directorBranches, directorName, 
                 </tbody>
               </table>
               <Pagination
-                total={totalEntries}
+                total={totalCount}
                 page={currentPage}
                 pageSize={pageSize}
                 onPage={setCurrentPage}
@@ -1819,35 +2035,32 @@ function FollowUpDashboard({ onLogout }) {
 }
 
 // ── Branch Stats ─────────────────────────────────────────────────────────────
-function BranchStats({ entries, filterDate }) {
+function BranchStats({ branch, refreshKey, filterDate }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA"); // YYYY-MM-DD in local timezone
+  const today = now.toLocaleDateString("en-CA");
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
-
-  const totalEntries = entries.length;
-  const totalRevenue = entries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-
-  // Use filterDate from EntriesTable if provided, else fall back to today
   const selectedDate = filterDate || today;
   const isToday = selectedDate === today;
-  const selectedEntries = entries.filter(e => String(e.entry_date).slice(0, 10) === selectedDate);
-  const todayRevenue = selectedEntries.reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
-  const todayCount = selectedEntries.length;
 
-  const thisMonthRevenue = entries
-    .filter(e => { const d = String(e.entry_date).slice(0, 10); return d >= periodStart && d <= periodEnd; })
-    .reduce((s, e) => s + (Number(e.amount_paid) || 0), 0);
+  const [stats, setStats] = useState(null);
 
-  const revenueByScheme = {};
-  const countByScheme = {};
-  entries.forEach(e => {
-    const amt = Number(e.amount_paid) || 0;
-    revenueByScheme[e.scheme_type] = (revenueByScheme[e.scheme_type] || 0) + amt;
-    countByScheme[e.scheme_type] = (countByScheme[e.scheme_type] || 0) + 1;
-  });
+  useEffect(() => {
+    fetch(`${API_BASE}/entries/stats?branch=${encodeURIComponent(branch)}&today=${selectedDate}&periodStart=${periodStart}&periodEnd=${periodEnd}`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setStats(d); })
+      .catch(() => {});
+  }, [branch, refreshKey, selectedDate]);
 
-  if (totalEntries === 0) return null;
+  if (!stats || stats.totalEntries === 0) return null;
+
+  const totalEntries   = stats.totalEntries;
+  const totalRevenue   = stats.totalRevenue;
+  const thisMonthRevenue = stats.periodRevenue;
+  const todayRevenue   = stats.todayRevenue;
+  const todayCount     = stats.todayCount;
+  const revenueByScheme = stats.revenueByScheme ?? {};
+  const countByScheme   = stats.countByScheme   ?? {};
 
   return (
     <div className="branch-stats">
@@ -1887,7 +2100,7 @@ function BranchStats({ entries, filterDate }) {
               .sort(([, a], [, b]) => b - a)
               .map(([scheme, total]) => {
                 const color = SCHEME_COLORS[scheme] || "#6b7280";
-                const pct = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
+                const pct   = totalRevenue > 0 ? Math.round((total / totalRevenue) * 100) : 0;
                 return (
                   <div key={scheme} className="bscheme-row">
                     <span className="bscheme-dot" style={{ background: color }} />
@@ -1909,20 +2122,27 @@ function BranchStats({ entries, filterDate }) {
 }
 
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
-function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
+function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
   const todayLocal = new Date().toLocaleDateString("en-CA");
-  const [colWidths, startResize] = useResizableColumns([60, 105, 130, 160, 120, 100, 90, 140, 185, 175, 175, 165, 80, 155]);
+  const [entries, setEntries]       = useState([]);
+  const [loading, setLoading]       = useState(false);
+  const [colWidths, startResize]    = useResizableColumns([60, 105, 130, 160, 120, 100, 90, 70, 140, 185, 175, 175, 165, 80, 155]);
 
-  const filtered = filterDate
-    ? entries.filter(e => String(e.entry_date).slice(0, 10) === filterDate)
-    : entries;
+  useEffect(() => {
+    setLoading(true);
+    fetch(`${API_BASE}/entries?branch=${encodeURIComponent(branch)}&date_from=${filterDate}&date_to=${filterDate}&page=1&pageSize=200`)
+      .then(r => r.json())
+      .then(d => { if (d.success) setEntries(d.data); })
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, [branch, filterDate, refreshKey]);
 
   return (
     <div className="table-card">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
         <SectionTitle icon="📊" title={`Recent Entries (${branch})`} />
-        {filtered.length > 0 && (
-          <button onClick={() => exportToCSV(filtered)} style={{ background: "var(--accent-green)", color: "white", border: "none", padding: "0.5rem 1rem", borderRadius: "6px", cursor: "pointer", fontWeight: "600", fontSize: "0.9rem" }}>
+        {entries.length > 0 && (
+          <button onClick={() => exportToCSV(entries)} style={{ background: "var(--accent-green)", color: "white", border: "none", padding: "0.5rem 1rem", borderRadius: "6px", cursor: "pointer", fontWeight: "600", fontSize: "0.9rem" }}>
             📥 Export to Excel
           </button>
         )}
@@ -1947,13 +2167,13 @@ function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
           </button>
         )}
         <span style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-          {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
+          {loading ? "Loading…" : `${entries.length} ${entries.length === 1 ? "entry" : "entries"}`}
         </span>
       </div>
 
-      {entries.length === 0 ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "1rem" }}>No entries found yet.</p>
-      ) : filtered.length === 0 ? (
+      {loading ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "1rem" }}>Loading…</p>
+      ) : entries.length === 0 ? (
         <p style={{ color: "var(--text-muted)", fontSize: "0.9rem", marginTop: "1rem" }}>No entries for this date.</p>
       ) : (
         <table style={{ borderCollapse: "collapse", tableLayout: "fixed", marginTop: "1rem", fontSize: "0.85rem", textAlign: "left", whiteSpace: "nowrap" }}>
@@ -1962,7 +2182,7 @@ function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
           </colgroup>
           <thead>
             <tr style={{ borderBottom: "1px solid var(--border-light)" }}>
-              {["S.No", "Date", "Branch", "Customer", "Phone", "Amount (₹)", "Pay Mode", "Txn Details", "Scheme", "Referred By", "Official", "Land Info", "Gold Pkg", "Notes"].map((h, i) => (
+              {["S.No", "Date", "Branch", "Customer", "Phone", "Amount (₹)", "Pay Mode", "Proof", "Txn Details", "Scheme", "Referred By", "Official", "Land Info", "Pkg / Qty", "Notes"].map((h, i) => (
                 <th key={h} style={{ padding: "0.5rem", position: "relative", background: "#f8fafc" }}>
                   {h}<ResizeHandle onMouseDown={e => startResize(i, e)} />
                 </th>
@@ -1970,10 +2190,10 @@ function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
             </tr>
           </thead>
           <tbody>
-            {filtered.map(e => {
-              const entryDateStr = String(e.entry_date).slice(0, 10);
+            {entries.map(e => {
+              const entryDateStr   = String(e.entry_date).slice(0, 10);
               const createdDateStr = new Date(e.created_at).toLocaleDateString("en-CA");
-              const createdLater = createdDateStr > entryDateStr;
+              const createdLater   = createdDateStr > entryDateStr;
               return (
                 <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
                   <td style={{ padding: "0.5rem" }}>{e.serial_number || "-"}</td>
@@ -1990,12 +2210,13 @@ function EntriesTable({ entries, branch, filterDate, setFilterDate }) {
                   <td style={{ padding: "0.5rem" }}>{e.phone_number}</td>
                   <td style={{ padding: "0.5rem", color: "var(--accent-green)", fontWeight: 600 }}>{Number(e.amount_paid).toLocaleString()}</td>
                   <td style={{ padding: "0.5rem" }}>{e.payment_mode}</td>
+                  <td style={{ padding: "0.5rem" }}><ProofLink proofUrl={e.proof_url} /></td>
                   <td style={{ padding: "0.5rem" }}>{e.transaction_details || "-"}</td>
                   <td style={{ padding: "0.5rem" }}>{e.scheme_type}</td>
                   <td style={{ padding: "0.5rem" }}>{e.referred_by ? `${e.referred_by}${e.referred_by_emp_id ? ` (${e.referred_by_emp_id})` : ""} - ${e.referred_by_role || "No Role"}` : "-"}</td>
                   <td style={{ padding: "0.5rem" }}>{e.higher_official ? `${e.higher_official}${e.higher_official_emp_id ? ` (${e.higher_official_emp_id})` : ""} - ${e.higher_official_role || "No Role"}` : "-"}</td>
                   <td style={{ padding: "0.5rem" }}>{e.land_kind_of_payment ? `${e.land_kind_of_payment} | ${e.land_site_name || ""} ${e.land_layout || ""} ${e.land_site_number ? `(#${e.land_site_number})` : ""}` : "-"}</td>
-                  <td style={{ padding: "0.5rem" }}>{e.gold_package || "-"}</td>
+                  <td style={{ padding: "0.5rem" }}>{e.gold_package ? `${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-"}</td>
                   <td style={{ padding: "0.5rem" }}>{e.notes || "-"}</td>
                 </tr>
               );
@@ -2018,7 +2239,7 @@ const initialForm = {
   higher_official: "", higher_official_emp_id: "", higher_official_role: "",
   notes: "",
   land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "",
-  gold_package: "",
+  gold_package: "", gold_quantity: "",
 };
 
 export default function CustomerEntryForm() {
@@ -2033,52 +2254,16 @@ export default function CustomerEntryForm() {
   });
 
   const [form, setForm] = useState({ ...initialForm, branch_name: localStorage.getItem("branch") || "" });
-  const [status, setStatus] = useState(null);
-  const [loading, setLoading] = useState(false);
-  const [entries, setEntries] = useState([]);
-  const [mdFilterBranch, setMdFilterBranch] = useState("");
-  const [mdFilterDateFrom, setMdFilterDateFrom] = useState("");
-  const [mdFilterDateTo, setMdFilterDateTo] = useState("");
-  const [filterDate, setFilterDate] = useState(new Date().toLocaleDateString("en-CA"));
-  // Director-specific filters
-  const [dirFilterBranch, setDirFilterBranch] = useState("");
-  const [dirFilterDateFrom, setDirFilterDateFrom] = useState("");
-  const [dirFilterDateTo, setDirFilterDateTo] = useState("");
+  const [status, setStatus]             = useState(null);
+  const [loading, setLoading]           = useState(false);
+  const [branchRefreshKey, setBranchRefreshKey] = useState(0);
+  const [filterDate, setFilterDate]     = useState(new Date().toLocaleDateString("en-CA"));
+  const [proofFile, setProofFile]       = useState(null);
 
   // Sync form branch when user changes (login / logout)
   useEffect(() => {
     if (user) setForm(prev => ({ ...prev, branch_name: user.branch }));
   }, [user]);
-
-  // Re-fetch entries whenever user or any filter changes
-  useEffect(() => {
-    if (!user) return;
-    const fetchEntries = async () => {
-      try {
-        const isAdmin = user.branch === "ALL" || user.role === "management";
-        const isDirector = user.role === "director" && user.directorBranches;
-        let url;
-        if (isDirector) {
-          const branchesParam = user.directorBranches.join(',');
-          url = `${API_BASE}/entries?directorBranches=${encodeURIComponent(branchesParam)}`;
-          if (dirFilterBranch) url += `&filterBranch=${encodeURIComponent(dirFilterBranch)}`;
-          if (dirFilterDateFrom) url += `&date_from=${dirFilterDateFrom}`;
-          if (dirFilterDateTo) url += `&date_to=${dirFilterDateTo}`;
-        } else {
-          url = `${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`;
-          if (isAdmin && mdFilterBranch) url += `&filterBranch=${encodeURIComponent(mdFilterBranch)}`;
-          if (isAdmin && mdFilterDateFrom) url += `&date_from=${mdFilterDateFrom}`;
-          if (isAdmin && mdFilterDateTo) url += `&date_to=${mdFilterDateTo}`;
-        }
-        const res = await fetch(url);
-        const data = await res.json();
-        if (data.success) setEntries(data.data);
-      } catch (err) {
-        console.error("Failed to fetch entries", err);
-      }
-    };
-    fetchEntries();
-  }, [user, mdFilterBranch, mdFilterDateFrom, mdFilterDateTo, dirFilterBranch, dirFilterDateFrom, dirFilterDateTo]);
 
   const handleLogout = () => {
     localStorage.removeItem("token");
@@ -2087,34 +2272,95 @@ export default function CustomerEntryForm() {
     localStorage.removeItem("directorBranches");
     localStorage.removeItem("directorName");
     setUser(null);
-    setEntries([]);
   };
 
   const set = (field) => (e) =>
     setForm(prev => ({
       ...prev,
       [field]: e.target.value,
-      ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "" } : {}),
+      ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "", gold_quantity: "" } : {}),
       ...(field === "land_site_name" ? { land_layout: "" } : {}),
+      ...(field === "gold_package" && e.target.value !== "Single" ? { gold_quantity: "" } : {}),
     }));
 
   const handleSubmit = async () => {
     setStatus(null);
+
+    // Client-side validation — mirrors backend required fields so upload never starts on bad data
+    const requiredFields = [
+      ["entry_date",     "Date"],
+      ["branch_name",    "Branch Name"],
+      ["customer_name",  "Customer Name"],
+      ["phone_number",   "Phone Number"],
+      ["amount_paid",    "Amount Paid"],
+      ["payment_mode",   "Payment Mode"],
+      ["scheme_type",    "Scheme Type"],
+    ];
+    for (const [key, label] of requiredFields) {
+      if (!form[key]) {
+        setStatus({ type: "error", msg: `${label} is required.` });
+        return;
+      }
+    }
+    if (form.gold_package === "Single" && form.gold_quantity) {
+      const qty = parseInt(form.gold_quantity);
+      const max = form.scheme_type === "GOLD COIN SAVINGS" ? 15 : 19;
+      if (isNaN(qty) || qty < 1) {
+        setStatus({ type: "error", msg: "Quantity must be a positive number." });
+        return;
+      }
+      if (qty > max) {
+        setStatus({ type: "error", msg: `Quantity cannot exceed ${max} for ${form.scheme_type === "GOLD COIN SAVINGS" ? "Gold Coin Savings" : "Jewel Savings"}.` });
+        return;
+      }
+    }
+    if ((form.payment_mode === "GPay" || form.payment_mode === "Bank") && !proofFile) {
+      setStatus({ type: "error", msg: "Please upload a payment proof for GPay / Bank transactions." });
+      return;
+    }
+
     setLoading(true);
+
+    let proofUrl = null;
+    if (proofFile) {
+      try {
+        const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${user.token}` },
+          body: JSON.stringify({ filename: proofFile.name, contentType: proofFile.type, paymentMode: form.payment_mode }),
+        });
+        const presignData = await presignRes.json();
+        if (!presignData.success) {
+          setStatus({ type: "error", msg: presignData.error || "Failed to prepare upload" });
+          setLoading(false); return;
+        }
+        const { uploadUrl, fields, fileUrl } = presignData;
+        const fd = new FormData();
+        Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+        fd.append("file", proofFile);
+        const uploadRes = await fetch(uploadUrl, { method: "POST", body: fd });
+        if (!uploadRes.ok) {
+          setStatus({ type: "error", msg: "Proof upload failed. Please try again." });
+          setLoading(false); return;
+        }
+        proofUrl = fileUrl;
+      } catch {
+        setStatus({ type: "error", msg: "Upload error. Check your connection." });
+        setLoading(false); return;
+      }
+    }
+
     try {
       const res = await fetch(`${API_BASE}/entries`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(form),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, proof_url: proofUrl }),
       });
       const data = await res.json();
       if (data.success) {
         setStatus({ type: "success", msg: `Entry saved! S.No ${data.serial_number}` });
         setForm({ ...initialForm, entry_date: todayISO(), branch_name: user.branch });
+        setProofFile(null);
         window.scrollTo({ top: 0, behavior: "smooth" });
-        // Re-trigger fetch by touching a dummy flag — actually just call directly
-        const url = `${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`;
-        const r = await fetch(url);
-        const d = await r.json();
-        if (d.success) setEntries(d.data);
+        setBranchRefreshKey(k => k + 1);
       } else {
         setStatus({ type: "error", msg: data.error });
       }
@@ -2123,19 +2369,6 @@ export default function CustomerEntryForm() {
     } finally {
       setLoading(false);
     }
-  };
-
-  const refetchEntries = async () => {
-    const isAdmin = user?.branch === "ALL" || user?.role === "management";
-    let url = `${API_BASE}/entries?branch=${encodeURIComponent(user.branch)}`;
-    if (isAdmin && mdFilterBranch) url += `&filterBranch=${encodeURIComponent(mdFilterBranch)}`;
-    if (isAdmin && mdFilterDateFrom) url += `&date_from=${mdFilterDateFrom}`;
-    if (isAdmin && mdFilterDateTo) url += `&date_to=${mdFilterDateTo}`;
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-      if (data.success) setEntries(data.data);
-    } catch (err) { console.error("Failed to fetch entries", err); }
   };
 
   if (!user) return <Login onLogin={(u) => {
@@ -2150,16 +2383,9 @@ export default function CustomerEntryForm() {
   if (user.role === "director" && user.directorBranches) {
     return (
       <DirectorDashboard
-        entries={entries}
         onLogout={handleLogout}
         directorBranches={user.directorBranches}
         directorName={user.directorName || "Director"}
-        filterBranch={dirFilterBranch}
-        setFilterBranch={setDirFilterBranch}
-        filterDateFrom={dirFilterDateFrom}
-        setFilterDateFrom={setDirFilterDateFrom}
-        filterDateTo={dirFilterDateTo}
-        setFilterDateTo={setDirFilterDateTo}
       />
     );
  }
@@ -2171,16 +2397,8 @@ export default function CustomerEntryForm() {
   if (user.role === "management") {
     return (
       <ManagementDashboard
-        entries={entries}
         onLogout={handleLogout}
-        mdFilterBranch={mdFilterBranch}
-        setMdFilterBranch={setMdFilterBranch}
-        mdFilterDateFrom={mdFilterDateFrom}
-        setMdFilterDateFrom={setMdFilterDateFrom}
-        mdFilterDateTo={mdFilterDateTo}
-        setMdFilterDateTo={setMdFilterDateTo}
         token={user.token}
-        onEntriesChange={refetchEntries}
       />
     );
   }
@@ -2188,14 +2406,7 @@ export default function CustomerEntryForm() {
   if (user.branch === "ALL") {
     return (
       <MDDashboard
-        entries={entries}
         onLogout={handleLogout}
-        mdFilterBranch={mdFilterBranch}
-        setMdFilterBranch={setMdFilterBranch}
-        mdFilterDateFrom={mdFilterDateFrom}
-        setMdFilterDateFrom={setMdFilterDateFrom}
-        mdFilterDateTo={mdFilterDateTo}
-        setMdFilterDateTo={setMdFilterDateTo}
       />
     );
   }
@@ -2234,10 +2445,24 @@ export default function CustomerEntryForm() {
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
           <TextInput label="Amount Paid (₹)" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
-          <SelectInput label="Payment Mode" required value={form.payment_mode} onChange={set("payment_mode")} options={["Cash", "Bank", "GPay"]} placeholder="Select mode" />
+          <SelectInput label="Payment Mode" required value={form.payment_mode}
+            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setProofFile(null); }}
+            options={["Cash", "Bank", "GPay"]} placeholder="Select mode" />
           <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
           <SelectInput label="Scheme Type" required value={form.scheme_type} onChange={set("scheme_type")} options={schemes} placeholder="Select scheme" />
         </div>
+
+        {(form.payment_mode === "GPay" || form.payment_mode === "Bank") && (
+          <div style={{ marginTop: "1rem" }}>
+            <ProofUploader
+              paymentMode={form.payment_mode}
+              pendingFile={proofFile}
+              existingUrl=""
+              onFileChange={setProofFile}
+              onClear={() => setProofFile(null)}
+            />
+          </div>
+        )}
 
         {/* Section 2 */}
         <SectionTitle icon="🤝" title="Reference & Officials" />
@@ -2290,6 +2515,17 @@ export default function CustomerEntryForm() {
             <SectionTitle icon="💎" title="Gold / Jewel Savings Details" />
             <div className="grid-2">
               <SelectInput label="Package" value={form.gold_package} onChange={set("gold_package")} options={["Single", "Full"]} placeholder="Select package" />
+              {form.gold_package === "Single" && (
+                <TextInput
+                  label="Quantity"
+                  type="number"
+                  value={form.gold_quantity}
+                  onChange={set("gold_quantity")}
+                  min="1"
+                  max={form.scheme_type === "GOLD COIN SAVINGS" ? 15 : 19}
+                  placeholder={`1 – ${form.scheme_type === "GOLD COIN SAVINGS" ? 15 : 19}`}
+                />
+              )}
             </div>
           </div>
         )}
@@ -2302,8 +2538,8 @@ export default function CustomerEntryForm() {
         </div>
       </div>
 
-      <BranchStats entries={entries} filterDate={filterDate} />
-      <EntriesTable entries={entries} branch={user.branch} filterDate={filterDate} setFilterDate={setFilterDate} />
+      <BranchStats branch={user.branch} refreshKey={branchRefreshKey} filterDate={filterDate} />
+      <EntriesTable branch={user.branch} refreshKey={branchRefreshKey} filterDate={filterDate} setFilterDate={setFilterDate} />
     </div>
   );
 }

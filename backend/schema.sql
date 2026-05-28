@@ -161,3 +161,25 @@ BEGIN
     ALTER TABLE customer_entries ADD COLUMN updated_at TIMESTAMPTZ;
   END IF;
 END $$;
+
+-- Add proof_url for S3-stored payment proof attachments (GPay / Bank)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='proof_url'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN proof_url TEXT;
+  END IF;
+END $$;
+
+-- Add gold_quantity for Gold Coin Savings (max 15) and Jewel Savings (max 19) Single packages
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='gold_quantity'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN gold_quantity INTEGER;
+  END IF;
+END $$;
