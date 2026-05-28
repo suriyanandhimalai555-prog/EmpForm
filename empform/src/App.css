@@ -846,6 +846,7 @@ textarea.field-input {
 .mode-cash { background: #ecfdf5; color: #065f46; }
 .mode-bank { background: #eff6ff; color: #1e40af; }
 .mode-gpay { background: #f5f3ff; color: #5b21b6; }
+.mode-cashbank { background: #fef3c7; color: #92400e; }
 
 /* Scheme tag */
 .scheme-tag {

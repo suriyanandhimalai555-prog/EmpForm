@@ -50,6 +50,7 @@ const exportToCSV = (entries) => {
   if (!entries || entries.length === 0) { alert("No entries to export."); return; }
   const headers = [
     "S.No", "Date", "Branch", "Customer Name", "Phone", "Amount Paid",
+    "Cash Amount", "Bank Amount",
     "Payment Mode", "Transaction Details", "Scheme",
     "Referred By", "Referrer Emp ID", "Referrer Role",
     "Higher Official", "Official Emp ID", "Official Role",
@@ -59,6 +60,7 @@ const exportToCSV = (entries) => {
   const rows = entries.map(e => [
     e.serial_number || "", formatDateToDDMMYYYY(e.entry_date), e.branch_name || "",
     e.customer_name || "", e.phone_number || "", e.amount_paid || "",
+    e.cash_amount || "", e.bank_amount || "",
     e.payment_mode || "", e.transaction_details || "", e.scheme_type || "",
     e.referred_by || "", e.referred_by_emp_id || "", e.referred_by_role || "",
     e.higher_official || "", e.higher_official_emp_id || "", e.higher_official_role || "",
@@ -650,9 +652,16 @@ function MDDashboard({ onLogout }) {
                         <td className="td-branch">{e.branch_name}</td>
                         <td>{e.customer_name}</td>
                         <td className="td-mono">{e.phone_number}</td>
-                        <td className="td-amount">₹{Number(e.amount_paid).toLocaleString()}</td>
+                        <td className="td-amount">
+                          ₹{Number(e.amount_paid).toLocaleString()}
+                          {e.payment_mode === "Cash+Bank" && (
+                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted, #6b7280)" }}>
+                              C ₹{Number(e.cash_amount).toLocaleString()} / B ₹{Number(e.bank_amount).toLocaleString()}
+                            </div>
+                          )}
+                        </td>
                         <td>
-                          <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase()}`}>
+                          <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase().replace(/\+/g, "")}`}>
                             {e.payment_mode}
                           </span>
                         </td>
@@ -818,6 +827,8 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
     gold_package: entry.gold_package || "",
     gold_quantity: entry.gold_quantity || "",
     proof_url: entry.proof_url || "",
+    cash_amount: entry.cash_amount || "",
+    bank_amount: entry.bank_amount || "",
   });
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState("");
@@ -829,11 +840,20 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
     ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "", gold_quantity: "" } : {}),
     ...(field === "land_site_name" ? { land_layout: "" } : {}),
     ...(field === "payment_mode" && e.target.value === "Cash" ? { proof_url: "" } : {}),
+    ...(field === "payment_mode" && e.target.value !== "Cash+Bank" ? { cash_amount: "", bank_amount: "" } : {}),
     ...(field === "gold_package" && e.target.value !== "Single" ? { gold_quantity: "" } : {}),
   }));
 
   const handleSave = async () => {
     setSaving(true); setError("");
+
+    if (form.payment_mode === "Cash+Bank") {
+      const c = Number(form.cash_amount), b = Number(form.bank_amount);
+      if (!(c > 0) || !(b > 0)) {
+        setError("Cash and Bank amounts must both be greater than 0.");
+        setSaving(false); return;
+      }
+    }
 
     let proofUrl = form.proof_url || null;
     if (pendingProofFile) {
@@ -841,7 +861,7 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
         const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ filename: pendingProofFile.name, contentType: pendingProofFile.type, paymentMode: form.payment_mode }),
+          body: JSON.stringify({ filename: pendingProofFile.name, contentType: pendingProofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
         });
         const presignData = await presignRes.json();
         if (!presignData.success) { setError(presignData.error || "Failed to prepare upload"); setSaving(false); return; }
@@ -887,18 +907,36 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
-          <TextInput label="Amount Paid" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
           <SelectInput label="Payment Mode" required value={form.payment_mode}
             onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setPendingProofFile(null); }}
-            options={["Cash", "Bank", "GPay"]} />
+            options={["Cash", "Bank", "GPay", "Cash+Bank"]} />
+          {form.payment_mode === "Cash+Bank" ? (
+            <>
+              <TextInput label="Cash Amount (₹)" required type="number" value={form.cash_amount}
+                onChange={e => {
+                  const cash = e.target.value;
+                  const total = (Number(cash) || 0) + (Number(form.bank_amount) || 0);
+                  setForm(f => ({ ...f, cash_amount: cash, amount_paid: total ? String(total) : "" }));
+                }} placeholder="0.00" />
+              <TextInput label="Bank Amount (₹)" required type="number" value={form.bank_amount}
+                onChange={e => {
+                  const bank = e.target.value;
+                  const total = (Number(form.cash_amount) || 0) + (Number(bank) || 0);
+                  setForm(f => ({ ...f, bank_amount: bank, amount_paid: total ? String(total) : "" }));
+                }} placeholder="0.00" />
+              <TextInput label="Total (₹)" disabled value={form.amount_paid} />
+            </>
+          ) : (
+            <TextInput label="Amount Paid" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
+          )}
           <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
           <SelectInput label="Scheme Type" required value={form.scheme_type} onChange={set("scheme_type")} options={schemes} />
         </div>
 
-        {(form.payment_mode === "GPay" || form.payment_mode === "Bank") && (
+        {(form.payment_mode === "GPay" || form.payment_mode === "Bank" || form.payment_mode === "Cash+Bank") && (
           <div style={{ marginTop: "1rem" }}>
             <ProofUploader
-              paymentMode={form.payment_mode}
+              paymentMode={form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode}
               pendingFile={pendingProofFile}
               existingUrl={form.proof_url}
               onFileChange={setPendingProofFile}
@@ -1453,9 +1491,16 @@ function ManagementDashboard({ onLogout, token }) {
                             <td className="td-branch">{e.branch_name}</td>
                             <td>{e.customer_name}</td>
                             <td className="td-mono">{e.phone_number}</td>
-                            <td className="td-amount">₹{Number(e.amount_paid).toLocaleString()}</td>
+                            <td className="td-amount">
+                          ₹{Number(e.amount_paid).toLocaleString()}
+                          {e.payment_mode === "Cash+Bank" && (
+                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted, #6b7280)" }}>
+                              C ₹{Number(e.cash_amount).toLocaleString()} / B ₹{Number(e.bank_amount).toLocaleString()}
+                            </div>
+                          )}
+                        </td>
                             <td>
-                              <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase()}`}>
+                              <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase().replace(/\+/g, "")}`}>
                                 {e.payment_mode}
                               </span>
                             </td>
@@ -1794,9 +1839,16 @@ function DirectorDashboard({ onLogout, directorBranches, directorName }) {
                         <td className="td-branch">{e.branch_name}</td>
                         <td>{e.customer_name}</td>
                         <td className="td-mono">{e.phone_number}</td>
-                        <td className="td-amount">₹{Number(e.amount_paid).toLocaleString()}</td>
+                        <td className="td-amount">
+                          ₹{Number(e.amount_paid).toLocaleString()}
+                          {e.payment_mode === "Cash+Bank" && (
+                            <div style={{ fontSize: "0.7rem", color: "var(--text-muted, #6b7280)" }}>
+                              C ₹{Number(e.cash_amount).toLocaleString()} / B ₹{Number(e.bank_amount).toLocaleString()}
+                            </div>
+                          )}
+                        </td>
                         <td>
-                          <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase()}`}>
+                          <span className={`mode-badge mode-${(e.payment_mode || "").toLowerCase().replace(/\+/g, "")}`}>
                             {e.payment_mode}
                           </span>
                         </td>
@@ -2208,7 +2260,14 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
                   <td style={{ padding: "0.5rem" }}>{e.branch_name}</td>
                   <td style={{ padding: "0.5rem" }}>{e.customer_name}</td>
                   <td style={{ padding: "0.5rem" }}>{e.phone_number}</td>
-                  <td style={{ padding: "0.5rem", color: "var(--accent-green)", fontWeight: 600 }}>{Number(e.amount_paid).toLocaleString()}</td>
+                  <td style={{ padding: "0.5rem", color: "var(--accent-green)", fontWeight: 600 }}>
+                    {Number(e.amount_paid).toLocaleString()}
+                    {e.payment_mode === "Cash+Bank" && (
+                      <div style={{ fontSize: "0.7rem", color: "var(--text-muted, #6b7280)", fontWeight: 400 }}>
+                        C ₹{Number(e.cash_amount).toLocaleString()} / B ₹{Number(e.bank_amount).toLocaleString()}
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: "0.5rem" }}>{e.payment_mode}</td>
                   <td style={{ padding: "0.5rem" }}><ProofLink proofUrl={e.proof_url} /></td>
                   <td style={{ padding: "0.5rem" }}>{e.transaction_details || "-"}</td>
@@ -2240,6 +2299,7 @@ const initialForm = {
   notes: "",
   land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "",
   gold_package: "", gold_quantity: "",
+  cash_amount: "", bank_amount: "",
 };
 
 export default function CustomerEntryForm() {
@@ -2281,6 +2341,7 @@ export default function CustomerEntryForm() {
       ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "", gold_quantity: "" } : {}),
       ...(field === "land_site_name" ? { land_layout: "" } : {}),
       ...(field === "gold_package" && e.target.value !== "Single" ? { gold_quantity: "" } : {}),
+      ...(field === "payment_mode" && e.target.value !== "Cash+Bank" ? { cash_amount: "", bank_amount: "" } : {}),
     }));
 
   const handleSubmit = async () => {
@@ -2292,13 +2353,20 @@ export default function CustomerEntryForm() {
       ["branch_name",    "Branch Name"],
       ["customer_name",  "Customer Name"],
       ["phone_number",   "Phone Number"],
-      ["amount_paid",    "Amount Paid"],
       ["payment_mode",   "Payment Mode"],
       ["scheme_type",    "Scheme Type"],
     ];
+    if (form.payment_mode !== "Cash+Bank") requiredFields.push(["amount_paid", "Amount Paid"]);
     for (const [key, label] of requiredFields) {
       if (!form[key]) {
         setStatus({ type: "error", msg: `${label} is required.` });
+        return;
+      }
+    }
+    if (form.payment_mode === "Cash+Bank") {
+      const c = Number(form.cash_amount), b = Number(form.bank_amount);
+      if (!(c > 0) || !(b > 0)) {
+        setStatus({ type: "error", msg: "Cash and Bank amounts must both be greater than 0." });
         return;
       }
     }
@@ -2314,7 +2382,7 @@ export default function CustomerEntryForm() {
         return;
       }
     }
-    if ((form.payment_mode === "GPay" || form.payment_mode === "Bank") && !proofFile) {
+    if (["GPay", "Bank", "Cash+Bank"].includes(form.payment_mode) && !proofFile) {
       setStatus({ type: "error", msg: "Please upload a payment proof for GPay / Bank transactions." });
       return;
     }
@@ -2327,7 +2395,7 @@ export default function CustomerEntryForm() {
         const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${user.token}` },
-          body: JSON.stringify({ filename: proofFile.name, contentType: proofFile.type, paymentMode: form.payment_mode }),
+          body: JSON.stringify({ filename: proofFile.name, contentType: proofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
         });
         const presignData = await presignRes.json();
         if (!presignData.success) {
@@ -2444,18 +2512,36 @@ export default function CustomerEntryForm() {
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
-          <TextInput label="Amount Paid (₹)" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
           <SelectInput label="Payment Mode" required value={form.payment_mode}
             onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setProofFile(null); }}
-            options={["Cash", "Bank", "GPay"]} placeholder="Select mode" />
+            options={["Cash", "Bank", "GPay", "Cash+Bank"]} placeholder="Select mode" />
+          {form.payment_mode === "Cash+Bank" ? (
+            <>
+              <TextInput label="Cash Amount (₹)" required type="number" value={form.cash_amount}
+                onChange={e => {
+                  const cash = e.target.value;
+                  const total = (Number(cash) || 0) + (Number(form.bank_amount) || 0);
+                  setForm(f => ({ ...f, cash_amount: cash, amount_paid: total ? String(total) : "" }));
+                }} placeholder="0.00" />
+              <TextInput label="Bank Amount (₹)" required type="number" value={form.bank_amount}
+                onChange={e => {
+                  const bank = e.target.value;
+                  const total = (Number(form.cash_amount) || 0) + (Number(bank) || 0);
+                  setForm(f => ({ ...f, bank_amount: bank, amount_paid: total ? String(total) : "" }));
+                }} placeholder="0.00" />
+              <TextInput label="Total (₹)" disabled value={form.amount_paid} />
+            </>
+          ) : (
+            <TextInput label="Amount Paid (₹)" required type="number" value={form.amount_paid} onChange={set("amount_paid")} placeholder="0.00" />
+          )}
           <TextInput label="Transaction Details" value={form.transaction_details} onChange={set("transaction_details")} placeholder="Ref / UTR / cheque no." />
           <SelectInput label="Scheme Type" required value={form.scheme_type} onChange={set("scheme_type")} options={schemes} placeholder="Select scheme" />
         </div>
 
-        {(form.payment_mode === "GPay" || form.payment_mode === "Bank") && (
+        {(form.payment_mode === "GPay" || form.payment_mode === "Bank" || form.payment_mode === "Cash+Bank") && (
           <div style={{ marginTop: "1rem" }}>
             <ProofUploader
-              paymentMode={form.payment_mode}
+              paymentMode={form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode}
               pendingFile={proofFile}
               existingUrl=""
               onFileChange={setProofFile}

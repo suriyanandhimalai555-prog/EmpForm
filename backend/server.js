@@ -87,8 +87,18 @@ function validateEntry(body) {
   const required = ["entry_date","branch_name","customer_name","phone_number","amount_paid","payment_mode","scheme_type"];
   const missing  = required.filter((k) => !body[k] && body[k] !== 0);
   if (missing.length) return `Missing required fields: ${missing.join(", ")}`;
-  if (!["Cash","Bank","GPay"].includes(body.payment_mode))
-    return "payment_mode must be one of: Cash, Bank, GPay";
+  const ALL_MODES = ["Cash", "Bank", "GPay", "Cash+Bank"];
+  if (!ALL_MODES.includes(body.payment_mode))
+    return "payment_mode must be one of: " + ALL_MODES.join(", ");
+  if (body.payment_mode === "Cash+Bank") {
+    const cash  = Number(body.cash_amount);
+    const bank  = Number(body.bank_amount);
+    const total = Number(body.amount_paid);
+    if (!(cash > 0) || !(bank > 0))
+      return "Cash+Bank requires both cash_amount and bank_amount > 0";
+    if (Math.abs((cash + bank) - total) > 0.01)
+      return "amount_paid must equal cash_amount + bank_amount";
+  }
   const entryYear = new Date(body.entry_date).getFullYear();
   if (entryYear < 2024 || entryYear > 2100)
     return "entry_date year must be between 2024 and 2100";
@@ -201,7 +211,7 @@ app.post("/api/entries", async (req, res) => {
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
     gold_package, gold_quantity,
-    proof_url,
+    proof_url, cash_amount, bank_amount,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
@@ -215,9 +225,9 @@ app.post("/api/entries", async (req, res) => {
       higher_official, higher_official_emp_id, higher_official_role,
       notes,
       land_kind_of_payment, land_site_name, land_site_number, land_layout,
-      gold_package, gold_quantity, proof_url
+      gold_package, gold_quantity, proof_url, cash_amount, bank_amount
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
     ) RETURNING id`;
 
   const client = await pool.connect();
@@ -252,6 +262,8 @@ app.post("/api/entries", async (req, res) => {
       notes || null,
       land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
       gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
+      payment_mode === "Cash+Bank" ? Number(cash_amount) : null,
+      payment_mode === "Cash+Bank" ? Number(bank_amount) : null,
     ]);
 
     await client.query("COMMIT");
@@ -482,7 +494,7 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
     gold_package, gold_quantity,
-    proof_url,
+    proof_url, cash_amount, bank_amount,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
@@ -533,8 +545,9 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         higher_official=$13, higher_official_emp_id=$14, higher_official_role=$15,
         notes=$16,
         land_kind_of_payment=$17, land_site_name=$18, land_site_number=$19, land_layout=$20,
-        gold_package=$21, gold_quantity=$22, proof_url=$23, updated_at=NOW()
-      WHERE id=$24`,
+        gold_package=$21, gold_quantity=$22, proof_url=$23,
+        cash_amount=$24, bank_amount=$25, updated_at=NOW()
+      WHERE id=$26`,
       [
         serialNumber, entry_date, normalizedBranch, customer_name,
         phone_number, Number(amount_paid), payment_mode, transaction_details || null,
@@ -544,6 +557,8 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         notes || null,
         land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
         gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
+        payment_mode === "Cash+Bank" ? Number(cash_amount) : null,
+        payment_mode === "Cash+Bank" ? Number(bank_amount) : null,
         entryId,
       ]
     );
@@ -648,13 +663,13 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
 
 // POST /api/uploads/presign — generate S3 presigned POST URL for proof uploads
 const ALLOWED_CONTENT_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf"];
-const ALLOWED_PAYMENT_MODES  = ["GPay", "Bank"];
+const ALLOWED_PAYMENT_MODES  = ["GPay", "Bank", "Cash+Bank"];
 
 app.post("/api/uploads/presign", authenticateToken, async (req, res) => {
   const { filename, contentType, paymentMode } = req.body;
 
   if (!ALLOWED_PAYMENT_MODES.includes(paymentMode))
-    return res.status(400).json({ success: false, error: "paymentMode must be GPay or Bank" });
+    return res.status(400).json({ success: false, error: "paymentMode must be GPay, Bank, or Cash+Bank" });
   if (!ALLOWED_CONTENT_TYPES.includes(contentType))
     return res.status(400).json({ success: false, error: "Unsupported file type" });
   if (!filename || typeof filename !== "string" || filename.length > 200)

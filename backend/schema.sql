@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS customer_entries (
   phone_number            TEXT          NOT NULL,
   amount_paid             NUMERIC(12,2) NOT NULL,
   payment_mode            TEXT          NOT NULL
-                            CHECK (payment_mode IN ('Cash', 'Bank', 'GPay')),
+                            CHECK (payment_mode IN ('Cash', 'Bank', 'GPay', 'Cash+Bank')),
   transaction_details     TEXT,
   scheme_type             TEXT          NOT NULL,
 
@@ -182,4 +182,40 @@ BEGIN
   ) THEN
     ALTER TABLE customer_entries ADD COLUMN gold_quantity INTEGER;
   END IF;
+END $$;
+
+-- Add cash_amount + bank_amount for split "Cash+Bank" payments
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='cash_amount'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN cash_amount NUMERIC(12,2);
+  END IF;
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='bank_amount'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN bank_amount NUMERIC(12,2);
+  END IF;
+END $$;
+
+-- Extend payment_mode CHECK to allow 'Cash+Bank'
+DO $$
+DECLARE
+  conname text;
+BEGIN
+  SELECT con.conname INTO conname
+    FROM pg_constraint con
+    JOIN pg_class rel ON rel.oid = con.conrelid
+   WHERE rel.relname = 'customer_entries'
+     AND con.contype = 'c'
+     AND pg_get_constraintdef(con.oid) ILIKE '%payment_mode%';
+  IF conname IS NOT NULL THEN
+    EXECUTE format('ALTER TABLE customer_entries DROP CONSTRAINT %I', conname);
+  END IF;
+  ALTER TABLE customer_entries
+    ADD CONSTRAINT customer_entries_payment_mode_check
+    CHECK (payment_mode IN ('Cash', 'Bank', 'GPay', 'Cash+Bank'));
 END $$;
