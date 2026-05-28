@@ -124,8 +124,23 @@ app.post("/api/login", async (req, res) => {
     if (!match) return res.status(401).json({ success: false, error: "Invalid email or password" });
     
     const role = user.role || 'branch';
-    const token = jwt.sign({ id: user.id, branch: user.branch_name.toUpperCase(), email: user.email, role }, JWT_SECRET, { expiresIn: '1d' });
-    return res.json({ success: true, token, branch: user.branch_name.toUpperCase(), email: user.email, role });
+    // For directors: branch_name stores a JSON array of branches
+    let branchValue = user.branch_name.toUpperCase();
+    let directorBranches = null;
+    if (role === 'director') {
+      try {
+        directorBranches = JSON.parse(user.branch_name); // array of branch strings
+        branchValue = 'DIRECTOR';
+      } catch (e) {
+        directorBranches = [user.branch_name.toUpperCase()];
+      }
+    }
+    const token = jwt.sign({ id: user.id, branch: branchValue, email: user.email, role, directorBranches }, JWT_SECRET, { expiresIn: '1d' });
+    // Derive readable director name from email (e.g. "cperumal.director@..." → "C PERUMAL")
+    const directorName = role === 'director'
+      ? user.email.split('@')[0].replace('.director', '').replace(/\./g, ' ').toUpperCase()
+      : undefined;
+    return res.json({ success: true, token, branch: branchValue, email: user.email, role, directorBranches, ...(directorName ? { directorName } : {}) });
   } catch(e) {
     console.error("Login error:", e.message);
     res.status(500).json({ success: false, error: "Server error" });
@@ -241,11 +256,24 @@ app.post("/api/entries", async (req, res) => {
 
 // GET /api/entries
 app.get("/api/entries", async (req, res) => {
-  const { branch, filterBranch, scheme, date_from, date_to } = req.query;
+  const { branch, filterBranch, scheme, date_from, date_to, directorBranches } = req.query;
   const conditions = ["1=1"];
   const params = [];
 
-  if (branch && branch !== 'ALL') {
+  if (directorBranches) {
+    // Director: filter by their list of branches (comma-separated)
+    const branchList = directorBranches.split(',').map(b => b.trim().toUpperCase()).filter(Boolean);
+    const filterBranchUpper = filterBranch ? filterBranch.toUpperCase() : null;
+    // If a specific branch is selected from the director's list, filter to just that one
+    if (filterBranchUpper && branchList.includes(filterBranchUpper)) {
+      params.push(filterBranchUpper);
+      conditions.push(`UPPER(branch_name) = $${params.length}`);
+    } else {
+      const placeholders = branchList.map((_, i) => `$${params.length + i + 1}`).join(', ');
+      params.push(...branchList);
+      conditions.push(`UPPER(branch_name) IN (${placeholders})`);
+    }
+  } else if (branch && branch !== 'ALL') {
     params.push(branch.toUpperCase());
     conditions.push(`UPPER(branch_name) = $${params.length}`);
   } else if (branch === 'ALL' && filterBranch) {
