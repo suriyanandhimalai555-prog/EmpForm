@@ -291,34 +291,68 @@ app.post("/api/entries", async (req, res) => {
 // GET /api/entries
 app.get("/api/entries", async (req, res) => {
   const { branch, filterBranch, scheme, date_from, date_to, directorBranches, page, pageSize } = req.query;
-  const conditions = ["1=1"];
-  const params = [];
 
-  if (directorBranches) {
-    const branchList = directorBranches.split(',').map(b => b.trim().toUpperCase()).filter(Boolean);
-    const filterBranchUpper = filterBranch ? filterBranch.toUpperCase() : null;
-    if (filterBranchUpper && branchList.includes(filterBranchUpper)) {
-      params.push(filterBranchUpper);
-      conditions.push(`UPPER(branch_name) = $${params.length}`);
-    } else {
-      const placeholders = branchList.map((_, i) => `$${params.length + i + 1}`).join(', ');
-      params.push(...branchList);
-      conditions.push(`UPPER(branch_name) IN (${placeholders})`);
+  // Build branch + date filters for one table. `dateCol` is the column that the
+  // date range applies to (entry_date for real entries, marked_date for no-collection
+  // days). Placeholders are numbered starting at `startIdx + 1`. includeScheme adds the
+  // scheme filter (only customer_entries has a scheme).
+  const buildFilter = (startIdx, dateCol, includeScheme) => {
+    const conditions = ["1=1"];
+    const params = [];
+    const p = (v) => { params.push(v); return `$${startIdx + params.length}`; };
+    if (directorBranches) {
+      const branchList = directorBranches.split(',').map(b => b.trim().toUpperCase()).filter(Boolean);
+      const filterBranchUpper = filterBranch ? filterBranch.toUpperCase() : null;
+      if (filterBranchUpper && branchList.includes(filterBranchUpper)) {
+        conditions.push(`UPPER(branch_name) = ${p(filterBranchUpper)}`);
+      } else {
+        const placeholders = branchList.map(b => p(b)).join(', ');
+        conditions.push(`UPPER(branch_name) IN (${placeholders})`);
+      }
+    } else if (branch && branch !== 'ALL') {
+      conditions.push(`UPPER(branch_name) = ${p(branch.toUpperCase())}`);
+    } else if (branch === 'ALL' && filterBranch) {
+      conditions.push(`UPPER(branch_name) = ${p(filterBranch.toUpperCase())}`);
     }
-  } else if (branch && branch !== 'ALL') {
-    params.push(branch.toUpperCase());
-    conditions.push(`UPPER(branch_name) = $${params.length}`);
-  } else if (branch === 'ALL' && filterBranch) {
-    params.push(filterBranch.toUpperCase());
-    conditions.push(`UPPER(branch_name) = $${params.length}`);
-  }
+    if (includeScheme && scheme) conditions.push(`scheme_type = ${p(scheme)}`);
+    if (date_from) conditions.push(`${dateCol} >= ${p(date_from)}`);
+    if (date_to)   conditions.push(`${dateCol} <= ${p(date_to)}`);
+    return { clause: conditions.join(" AND "), params };
+  };
 
-  if (scheme)    { params.push(scheme);    conditions.push(`scheme_type = $${params.length}`); }
-  if (date_from) { params.push(date_from); conditions.push(`entry_date >= $${params.length}`); }
-  if (date_to)   { params.push(date_to);   conditions.push(`entry_date <= $${params.length}`); }
+  // No-collection rows are excluded when a scheme filter is active (they have no scheme).
+  const includeNc = !scheme;
 
-  const whereClause = conditions.join(" AND ");
-  const orderClause = `ORDER BY entry_date ASC, branch_name ASC, (CASE WHEN serial_number ~ '^[0-9]+$' THEN serial_number::integer ELSE 0 END) ASC, created_at ASC`;
+  const entriesFilter = buildFilter(0, "entry_date", true);
+  const ncFilter = includeNc ? buildFilter(entriesFilter.params.length, "marked_date", false) : null;
+  const allParams = ncFilter ? [...entriesFilter.params, ...ncFilter.params] : [...entriesFilter.params];
+
+  // Synthetic no-collection rows are merged with real entries via UNION ALL.
+  // to_jsonb(ce) keeps the merge robust to schema changes (no column enumeration).
+  const ncUnion = ncFilter ? `
+      UNION ALL
+      SELECT jsonb_build_object(
+               'id', 'nc-' || branch_name || '-' || marked_date,
+               'entry_date', marked_date,
+               'branch_name', branch_name,
+               'customer_name', 'NO COLLECTIONS',
+               'is_no_collection', true
+             ) AS j, marked_date AS sort_date, 0 AS sn, branch_name AS sort_branch, marked_at AS sort_created
+      FROM branch_no_collection_days WHERE ${ncFilter.clause}` : "";
+
+  const mergedCTE = `
+    WITH merged AS (
+      SELECT to_jsonb(ce) AS j, ce.entry_date AS sort_date,
+             (CASE WHEN ce.serial_number ~ '^[0-9]+$' THEN ce.serial_number::integer ELSE 0 END) AS sn,
+             ce.branch_name AS sort_branch, ce.created_at AS sort_created
+      FROM customer_entries ce WHERE ${entriesFilter.clause}${ncUnion}
+    )`;
+  const orderClause = `ORDER BY sort_date ASC, sort_branch ASC, sn ASC, sort_created ASC`;
+
+  // Combined total = entries matching + no-collection days matching
+  const countSql = `SELECT (SELECT COUNT(*) FROM customer_entries WHERE ${entriesFilter.clause})`
+    + (ncFilter ? ` + (SELECT COUNT(*) FROM branch_no_collection_days WHERE ${ncFilter.clause})` : "")
+    + ` AS total`;
 
   try {
     // Server-side pagination when page & pageSize are provided
@@ -327,18 +361,16 @@ app.get("/api/entries", async (req, res) => {
       const ps = Math.max(1, Math.min(200, parseInt(pageSize)));
       const offset = (pg - 1) * ps;
 
-      // Get total count
-      const countResult = await pool.query(`SELECT COUNT(*) AS total FROM customer_entries WHERE ${whereClause}`, params);
+      const countResult = await pool.query(countSql, allParams);
       const totalCount = parseInt(countResult.rows[0].total);
 
-      // Get paginated data
-      const paginatedParams = [...params, ps, offset];
-      const sql = `SELECT * FROM customer_entries WHERE ${whereClause} ${orderClause} LIMIT $${paginatedParams.length - 1} OFFSET $${paginatedParams.length}`;
+      const paginatedParams = [...allParams, ps, offset];
+      const sql = `${mergedCTE} SELECT j FROM merged ${orderClause} LIMIT $${paginatedParams.length - 1} OFFSET $${paginatedParams.length}`;
       const result = await pool.query(sql, paginatedParams);
 
       return res.json({
         success: true,
-        data: result.rows,
+        data: result.rows.map(r => r.j),
         count: result.rowCount,
         totalCount,
         page: pg,
@@ -347,9 +379,9 @@ app.get("/api/entries", async (req, res) => {
     }
 
     // No pagination — return all (backward compatible)
-    const sql = `SELECT * FROM customer_entries WHERE ${whereClause} ${orderClause}`;
-    const result = await pool.query(sql, params);
-    return res.json({ success: true, count: result.rowCount, data: result.rows });
+    const sql = `${mergedCTE} SELECT j FROM merged ${orderClause}`;
+    const result = await pool.query(sql, allParams);
+    return res.json({ success: true, count: result.rowCount, data: result.rows.map(r => r.j) });
   } catch (e) {
     console.error("Entries query error:", e.message);
     return res.status(500).json({ success: false, error: "Database error" });
@@ -622,28 +654,41 @@ function todayIST() {
   return new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0];
 }
 
-// GET /api/no-collection/me — branch reads whether today is marked
+// Validate a YYYY-MM-DD string; return it or null
+function normalizeDate(value) {
+  if (typeof value !== "string") return null;
+  const v = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return null;
+  const d = new Date(v + "T00:00:00");
+  if (Number.isNaN(d.getTime())) return null;
+  return v;
+}
+
+// GET /api/no-collection/me — branch reads its marked no-collection dates
 app.get("/api/no-collection/me", authenticateToken, async (req, res) => {
   if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
-  const date   = todayIST();
   const branch = (req.user.branch || "").toUpperCase();
   const { rows } = await pool.query(
-    "SELECT marked_at FROM branch_no_collection_days WHERE branch_name=$1 AND marked_date=$2",
-    [branch, date]
+    "SELECT marked_date FROM branch_no_collection_days WHERE UPPER(branch_name)=$1 ORDER BY marked_date DESC",
+    [branch]
   );
-  return res.json({ success: true, date, marked: rows.length > 0, markedAt: rows[0]?.marked_at || null });
+  const dates = rows.map(r => String(r.marked_date).slice(0, 10));
+  return res.json({ success: true, today: todayIST(), dates });
 });
 
-// POST /api/no-collection — branch marks today as no collections
+// POST /api/no-collection — branch marks a date (default today) as no collections
 app.post("/api/no-collection", authenticateToken, async (req, res) => {
   if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
-  const date   = todayIST();
+  const date   = req.body?.date ? normalizeDate(req.body.date) : todayIST();
   const branch = (req.user.branch || "").toUpperCase();
+  if (!date) return res.status(400).json({ success: false, error: "Invalid date" });
+  if (date > todayIST()) return res.status(400).json({ success: false, error: "Cannot mark a future date" });
+  // Block if entries already exist for this form date (entry_date) — not when they were typed in
   const { rows: existing } = await pool.query(
-    "SELECT 1 FROM customer_entries WHERE UPPER(branch_name)=$1 AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = $2::date LIMIT 1",
+    "SELECT 1 FROM customer_entries WHERE UPPER(branch_name)=$1 AND entry_date = $2::date LIMIT 1",
     [branch, date]
   );
-  if (existing.length) return res.status(400).json({ success: false, error: "Cannot mark — entries already exist for today" });
+  if (existing.length) return res.status(400).json({ success: false, error: `Cannot mark — entries already exist for ${date}` });
   await pool.query(
     `INSERT INTO branch_no_collection_days (branch_name, marked_date, marked_by, note)
      VALUES ($1, $2, $3, $4) ON CONFLICT (branch_name, marked_date) DO NOTHING`,
@@ -652,13 +697,15 @@ app.post("/api/no-collection", authenticateToken, async (req, res) => {
   return res.json({ success: true, date, marked: true });
 });
 
-// DELETE /api/no-collection — branch undoes today's mark
+// DELETE /api/no-collection — branch undoes a date's mark (default today)
 app.delete("/api/no-collection", authenticateToken, async (req, res) => {
   if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
-  const date   = todayIST();
+  const raw    = req.body?.date || req.query?.date;
+  const date   = raw ? normalizeDate(raw) : todayIST();
   const branch = (req.user.branch || "").toUpperCase();
+  if (!date) return res.status(400).json({ success: false, error: "Invalid date" });
   await pool.query(
-    "DELETE FROM branch_no_collection_days WHERE branch_name=$1 AND marked_date=$2",
+    "DELETE FROM branch_no_collection_days WHERE UPPER(branch_name)=$1 AND marked_date=$2",
     [branch, date]
   );
   return res.json({ success: true, date, marked: false });

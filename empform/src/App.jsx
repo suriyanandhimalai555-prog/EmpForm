@@ -221,10 +221,12 @@ function FieldLabel({ children, required }) {
   return <label className="field-label">{children}{required && <span className="required-star"> *</span>}</label>;
 }
 function TextInput({ label, required, ...props }) {
+  // For number fields, stop the mouse wheel from changing the value — only typing should.
+  const numberProps = props.type === "number" ? { onWheel: (e) => e.currentTarget.blur() } : {};
   return (
     <div className="field-group">
       <FieldLabel required={required}>{label}</FieldLabel>
-      <input className="field-input" {...props} />
+      <input className="field-input" {...props} {...numberProps} />
     </div>
   );
 }
@@ -661,6 +663,7 @@ function MDDashboard({ onLogout }) {
                     const landInfo = e.land_kind_of_payment
                       ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
                       : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
+                    if (e.is_no_collection) return <NoCollectionRow key={e.id} entry={e} blankCols={9} />;
                     return (
                       <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                         <td className="td-mono">{e.serial_number || "-"}</td>
@@ -800,6 +803,10 @@ function ProofLink({ proofUrl }) {
 
   const handleView = async () => {
     setLoading(true);
+    // Open the tab synchronously inside the click gesture so mobile browsers
+    // (iOS Safari especially) don't block it as a popup. We redirect it once
+    // the signed URL resolves. Falls back to the current tab if blocked.
+    const win = window.open("about:blank", "_blank");
     try {
       const token = localStorage.getItem("token");
       const key   = proofUrl.replace(/^https?:\/\/[^/]+\//, "");
@@ -807,7 +814,14 @@ function ProofLink({ proofUrl }) {
         headers: { "Authorization": `Bearer ${token}` },
       });
       const data = await res.json();
-      if (data.success) window.open(data.url, "_blank", "noopener,noreferrer");
+      if (data.success && data.url) {
+        if (win) { win.opener = null; win.location.href = data.url; }
+        else { window.location.href = data.url; }
+      } else if (win) {
+        win.close();
+      }
+    } catch {
+      if (win) win.close();
     } finally { setLoading(false); }
   };
 
@@ -819,42 +833,128 @@ function ProofLink({ proofUrl }) {
 }
 
 // ── No Collection Toggle ─────────────────────────────────────────────────────
-function NoCollectionToggle({ token, refreshKey }) {
-  const [marked, setMarked] = useState(null);
+function NoCollectionToggle({ token, refreshKey, onChange }) {
+  const today = new Date().toLocaleDateString("en-CA");
+  const [dates, setDates]   = useState(null);   // array of marked YYYY-MM-DD, null = loading
+  const [open, setOpen]     = useState(false);
+  const [pick, setPick]     = useState(today);
   const [busy, setBusy]     = useState(false);
   const [error, setError]   = useState("");
+  const [msg, setMsg]       = useState("");
 
-  useEffect(() => {
+  const load = () => {
     authFetch(`${API_BASE}/no-collection/me`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
-      .then(d => { if (d.success) setMarked(d.marked); })
-      .catch(() => setMarked(false));
-  }, [token, refreshKey]);
+      .then(d => { if (d.success) setDates(d.dates || []); })
+      .catch(() => setDates([]));
+  };
+  useEffect(() => { load(); }, [token, refreshKey]);
 
-  const toggle = async () => {
-    setBusy(true); setError("");
+  const mark = async () => {
+    setBusy(true); setError(""); setMsg("");
     try {
-      const method = marked ? "DELETE" : "POST";
       const res = await authFetch(`${API_BASE}/no-collection`, {
-        method,
+        method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-        body: method === "POST" ? JSON.stringify({}) : undefined,
+        body: JSON.stringify({ date: pick }),
       });
       const d = await res.json();
-      if (d.success) setMarked(d.marked);
+      if (d.success) {
+        setMsg(`${formatDateToDDMMYYYY(d.date)} marked as no collections`);
+        setOpen(false);
+        load();
+        onChange?.();
+      } else setError(d.error || "Failed");
+    } catch { setError("Network error"); }
+    setBusy(false);
+  };
+
+  const undo = async (date) => {
+    setBusy(true); setError(""); setMsg("");
+    try {
+      const res = await authFetch(`${API_BASE}/no-collection?date=${date}`, {
+        method: "DELETE",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await res.json();
+      if (d.success) { load(); onChange?.(); }
       else setError(d.error || "Failed");
     } catch { setError("Network error"); }
     setBusy(false);
   };
 
-  if (marked === null) return null;
+  if (dates === null) return null;
   return (
-    <div className="no-collection-toggle">
-      <button onClick={toggle} disabled={busy} className={marked ? "ncc-btn marked" : "ncc-btn"}>
-        {marked ? "✓ Marked: No Collections Today (Undo)" : "Mark No Collections Today"}
+    <div className="ncc">
+      <button
+        onClick={() => { setOpen(o => !o); setError(""); setMsg(""); }}
+        className={`ncc-btn ncc-trigger${open ? " open" : ""}`}
+        aria-expanded={open}
+      >
+        <span className="ncc-trigger-icon">⊘</span> Mark No Collection
       </button>
-      {error && <span className="ncc-err">{error}</span>}
+
+      {open && (
+        <div className="ncc-panel">
+          <label className="ncc-field">
+            <span className="ncc-label">Select date</span>
+            <input
+              type="date"
+              className="ncc-date"
+              value={pick}
+              max={today}
+              onChange={e => setPick(e.target.value)}
+            />
+          </label>
+          <div className="ncc-actions">
+            <button onClick={mark} disabled={busy} className="ncc-btn ncc-confirm">
+              {busy ? "Marking…" : "Mark"}
+            </button>
+            <button onClick={() => setOpen(false)} disabled={busy} className="ncc-btn ncc-cancel">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {msg && <div className="ncc-msg">✓ {msg}</div>}
+      {error && <div className="ncc-err">{error}</div>}
+
+      {dates.length > 0 && (
+        <div className="ncc-list">
+          <span className="ncc-list-title">No-collection days</span>
+          <div className="ncc-chips">
+            {dates.map(dt => (
+              <span key={dt} className="ncc-chip">
+                {formatDateToDDMMYYYY(dt)}
+                <button
+                  onClick={() => undo(dt)}
+                  disabled={busy}
+                  className="ncc-chip-x"
+                  aria-label={`Remove ${formatDateToDDMMYYYY(dt)}`}
+                  title="Remove"
+                >✕</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+// ── No Collection synthetic row (shared by all entry tables) ─────────────────
+// Renders a "NO COLLECTIONS" day as a normal row: Date + Branch filled, the label
+// in the Customer column, and `blankCols` empty cells for the remaining columns.
+function NoCollectionRow({ entry, blankCols }) {
+  return (
+    <tr style={{ background: "#fffbeb" }}>
+      <td style={{ padding: "0.5rem" }}>-</td>
+      <td style={{ padding: "0.5rem", whiteSpace: "nowrap" }}>{formatDateToDDMMYYYY(entry.entry_date)}</td>
+      <td style={{ padding: "0.5rem" }}>{entry.branch_name}</td>
+      <td style={{ padding: "0.5rem", fontWeight: 600, color: "#b45309" }}>NO COLLECTIONS</td>
+      {Array.from({ length: blankCols }).map((_, i) => <td key={i} style={{ padding: "0.5rem" }} />)}
+    </tr>
   );
 }
 
@@ -1540,6 +1640,7 @@ function ManagementDashboard({ onLogout, token }) {
                         const landInfo = e.land_kind_of_payment
                           ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
                           : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
+                        if (e.is_no_collection) return <NoCollectionRow key={e.id} entry={e} blankCols={10} />;
                         return (
                           <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                             <td className="td-mono">{e.serial_number || "-"}</td>
@@ -1888,6 +1989,7 @@ function DirectorDashboard({ onLogout, directorBranches, directorName }) {
                     const landInfo = e.land_kind_of_payment
                       ? [e.land_kind_of_payment, e.land_site_name, e.land_layout, e.land_site_number && `#${e.land_site_number}`].filter(Boolean).join(" · ")
                       : e.gold_package ? `Gold: ${e.gold_package}${e.gold_quantity ? ` ×${e.gold_quantity}` : ""}` : "-";
+                    if (e.is_no_collection) return <NoCollectionRow key={e.id} entry={e} blankCols={9} />;
                     return (
                       <tr key={e.id} className={idx % 2 === 0 ? "tr-even" : "tr-odd"}>
                         <td className="td-mono">{e.serial_number || "-"}</td>
@@ -2329,6 +2431,7 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
               const entryDateStr   = String(e.entry_date).slice(0, 10);
               const createdDateStr = new Date(e.created_at).toLocaleDateString("en-CA");
               const createdLater   = createdDateStr > entryDateStr;
+              if (e.is_no_collection) return <NoCollectionRow key={e.id} entry={e} blankCols={11} />;
               return (
                 <tr key={e.id} style={{ borderBottom: "1px solid #f3f4f6" }}>
                   <td style={{ padding: "0.5rem" }}>{e.serial_number || "-"}</td>
@@ -2584,7 +2687,6 @@ export default function CustomerEntryForm() {
           <div>
             <h1 className="form-title">Customer Entry Form</h1>
             <p className="form-subtitle">Branch: {user.branch}</p>
-            <NoCollectionToggle token={user.token} refreshKey={branchRefreshKey} />
           </div>
         </div>
 
@@ -2713,6 +2815,10 @@ export default function CustomerEntryForm() {
             {loading ? <><span className="spinner" /> Saving…</> : <><span className="btn-icon">→</span> Submit Entry</>}
           </button>
         </div>
+      </div>
+
+      <div className="ncc-card">
+        <NoCollectionToggle token={user.token} refreshKey={branchRefreshKey} onChange={() => setBranchRefreshKey(k => k + 1)} />
       </div>
 
       <BranchStats branch={user.branch} refreshKey={branchRefreshKey} filterDate={filterDate} />
