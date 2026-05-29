@@ -3,7 +3,23 @@ import "./App.css";
 
 const API_BASE = import.meta.env.VITE_API_URL
   ? `${import.meta.env.VITE_API_URL}/api`
-  : "http://api.avgupi.com/api";
+  : "http://localhost:5000/api";
+
+async function authFetch(url, options = {}) {
+  const res = await fetch(url, options);
+  if (res.status === 401) {
+    const sentAuth = !!(options.headers && (options.headers.Authorization || options.headers.authorization));
+    if (sentAuth) {
+      localStorage.removeItem("token");
+      localStorage.removeItem("branch");
+      localStorage.removeItem("role");
+      localStorage.removeItem("directorBranches");
+      localStorage.removeItem("directorName");
+      window.dispatchEvent(new Event("auth:logout"));
+    }
+  }
+  return res;
+}
 
 const branches = [
   "AARANI", "ANDIMADAM", "ANEKAL", "ARIYALUR", "ARIYANKUPPAM", "ATTIBELE", "ATTUR",
@@ -787,7 +803,7 @@ function ProofLink({ proofUrl }) {
     try {
       const token = localStorage.getItem("token");
       const key   = proofUrl.replace(/^https?:\/\/[^/]+\//, "");
-      const res   = await fetch(`${API_BASE}/uploads/sign-get?key=${encodeURIComponent(key)}`, {
+      const res   = await authFetch(`${API_BASE}/uploads/sign-get?key=${encodeURIComponent(key)}`, {
         headers: { "Authorization": `Bearer ${token}` },
       });
       const data = await res.json();
@@ -799,6 +815,46 @@ function ProofLink({ proofUrl }) {
     <button className="proof-view-btn" onClick={handleView} disabled={loading}>
       {loading ? "…" : "View"}
     </button>
+  );
+}
+
+// ── No Collection Toggle ─────────────────────────────────────────────────────
+function NoCollectionToggle({ token, refreshKey }) {
+  const [marked, setMarked] = useState(null);
+  const [busy, setBusy]     = useState(false);
+  const [error, setError]   = useState("");
+
+  useEffect(() => {
+    authFetch(`${API_BASE}/no-collection/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then(r => r.json())
+      .then(d => { if (d.success) setMarked(d.marked); })
+      .catch(() => setMarked(false));
+  }, [token, refreshKey]);
+
+  const toggle = async () => {
+    setBusy(true); setError("");
+    try {
+      const method = marked ? "DELETE" : "POST";
+      const res = await authFetch(`${API_BASE}/no-collection`, {
+        method,
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: method === "POST" ? JSON.stringify({}) : undefined,
+      });
+      const d = await res.json();
+      if (d.success) setMarked(d.marked);
+      else setError(d.error || "Failed");
+    } catch { setError("Network error"); }
+    setBusy(false);
+  };
+
+  if (marked === null) return null;
+  return (
+    <div className="no-collection-toggle">
+      <button onClick={toggle} disabled={busy} className={marked ? "ncc-btn marked" : "ncc-btn"}>
+        {marked ? "✓ Marked: No Collections Today (Undo)" : "Mark No Collections Today"}
+      </button>
+      {error && <span className="ncc-err">{error}</span>}
+    </div>
   );
 }
 
@@ -858,7 +914,7 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
     let proofUrl = form.proof_url || null;
     if (pendingProofFile) {
       try {
-        const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
+        const presignRes = await authFetch(`${API_BASE}/uploads/presign`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
           body: JSON.stringify({ filename: pendingProofFile.name, contentType: pendingProofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
@@ -876,7 +932,7 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
     }
 
     try {
-      const res = await fetch(`${API_BASE}/entries/${entry.id}`, {
+      const res = await authFetch(`${API_BASE}/entries/${entry.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ ...form, proof_url: proofUrl }),
@@ -1025,7 +1081,7 @@ function UserManagementPanel({ token }) {
   const [showPwd, setShowPwd] = useState(false);
 
   useEffect(() => {
-    fetch(`${API_BASE}/users`, { headers: { "Authorization": `Bearer ${token}` } })
+    authFetch(`${API_BASE}/users`, { headers: { "Authorization": `Bearer ${token}` } })
       .then(r => r.json())
       .then(data => { if (data.success) setUsers(data.data); })
       .catch(() => { })
@@ -1039,7 +1095,7 @@ function UserManagementPanel({ token }) {
     }
     setResetting(true);
     try {
-      const res = await fetch(`${API_BASE}/admin/reset-password`, {
+      const res = await authFetch(`${API_BASE}/admin/reset-password`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
         body: JSON.stringify({ userId: resetTarget.id, newPassword }),
@@ -1207,7 +1263,7 @@ function ManagementDashboard({ onLogout, token }) {
   const handleDelete = async () => {
     setDeleting(true);
     try {
-      const res  = await fetch(`${API_BASE}/entries/${deleteConfirm.id}`, {
+      const res  = await authFetch(`${API_BASE}/entries/${deleteConfirm.id}`, {
         method: "DELETE",
         headers: { "Authorization": `Bearer ${token}` },
       });
@@ -1899,7 +1955,7 @@ function FollowUpDashboard({ onLogout }) {
   const fetchData = async (d) => {
     setLoading(true); setError("");
     try {
-      const res = await fetch(`${API_BASE}/follow-up?date=${d}`, {
+      const res = await authFetch(`${API_BASE}/follow-up?date=${d}`, {
         headers: { "Authorization": `Bearer ${token}` },
       });
       if (res.status === 401 || res.status === 403) { onLogout(); return; }
@@ -1919,7 +1975,7 @@ function FollowUpDashboard({ onLogout }) {
   }, [date]);
 
   const isToday = date === today;
-  const pct = data ? Math.round((data.submittedCount / (data.totalBranches || 1)) * 100) : 0;
+  const pct = data ? Math.round((data.submittedCount / Math.max((data.totalBranches || 1) - (data.noCollectionCount || 0), 1)) * 100) : 0;
 
   return (
     <div className="admin-layout">
@@ -1991,6 +2047,11 @@ function FollowUpDashboard({ onLogout }) {
                 <div className="kpi-value">{data.missingCount}</div>
                 <div className="kpi-label">Not Submitted</div>
               </div>
+              <div className="kpi-card">
+                <div className="kpi-top"><span className="kpi-icon-wrap" style={{ background: "#f3f4f6" }}>🚫</span></div>
+                <div className="kpi-value">{data.noCollectionCount || 0}</div>
+                <div className="kpi-label">No Collections</div>
+              </div>
             </div>
 
             {/* Progress bar */}
@@ -1998,6 +2059,7 @@ function FollowUpDashboard({ onLogout }) {
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "0.5rem", fontSize: "0.85rem", fontWeight: 600 }}>
                 <span style={{ color: "#059669" }}>Submitted {data.submittedCount}</span>
                 <span style={{ color: "#dc2626" }}>Missing {data.missingCount}</span>
+                <span style={{ color: "#6b7280" }}>No Collections {data.noCollectionCount || 0}</span>
               </div>
               <div style={{ height: "10px", borderRadius: "99px", background: "#fee2e2", overflow: "hidden" }}>
                 <div style={{ height: "100%", width: `${pct}%`, background: "#059669", borderRadius: "99px", transition: "width 0.5s" }} />
@@ -2056,6 +2118,27 @@ function FollowUpDashboard({ onLogout }) {
                 )}
               </div>
             </div>
+
+            {/* No Collections Today */}
+            {data.noCollection && data.noCollection.length > 0 && (
+              <div className="admin-panel" style={{ marginTop: "1.5rem" }}>
+                <div className="admin-panel-header">
+                  <div>
+                    <div className="admin-panel-title" style={{ color: "#6b7280" }}>
+                      No Collections Today &nbsp;<span style={{ fontSize: "1rem" }}>({data.noCollectionCount})</span>
+                    </div>
+                    <div className="admin-panel-sub">Branches that marked themselves as having no collections for {date}</div>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem", padding: "0.25rem 0" }}>
+                  {data.noCollection.map(b => (
+                    <span key={b} style={{ background: "#f3f4f6", color: "#374151", border: "1px solid #d1d5db", borderRadius: "6px", padding: "0.4rem 0.75rem", fontSize: "0.82rem", fontWeight: 600 }}>
+                      {b}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {/* Never Entered */}
             {data.neverEntered && data.neverEntered.length > 0 && (
@@ -2320,6 +2403,13 @@ export default function CustomerEntryForm() {
   const [filterDate, setFilterDate]     = useState(new Date().toLocaleDateString("en-CA"));
   const [proofFile, setProofFile]       = useState(null);
 
+  // Force logout when any authFetch detects an expired/invalid token
+  useEffect(() => {
+    const onForceLogout = () => setUser(null);
+    window.addEventListener("auth:logout", onForceLogout);
+    return () => window.removeEventListener("auth:logout", onForceLogout);
+  }, []);
+
   // Sync form branch when user changes (login / logout)
   useEffect(() => {
     if (user) setForm(prev => ({ ...prev, branch_name: user.branch }));
@@ -2392,7 +2482,7 @@ export default function CustomerEntryForm() {
     let proofUrl = null;
     if (proofFile) {
       try {
-        const presignRes = await fetch(`${API_BASE}/uploads/presign`, {
+        const presignRes = await authFetch(`${API_BASE}/uploads/presign`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "Authorization": `Bearer ${user.token}` },
           body: JSON.stringify({ filename: proofFile.name, contentType: proofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
@@ -2494,6 +2584,7 @@ export default function CustomerEntryForm() {
           <div>
             <h1 className="form-title">Customer Entry Form</h1>
             <p className="form-subtitle">Branch: {user.branch}</p>
+            <NoCollectionToggle token={user.token} refreshKey={branchRefreshKey} />
           </div>
         </div>
 

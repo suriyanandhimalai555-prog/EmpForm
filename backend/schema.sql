@@ -219,3 +219,15 @@ BEGIN
     ADD CONSTRAINT customer_entries_payment_mode_check
     CHECK (payment_mode IN ('Cash', 'Bank', 'GPay', 'Cash+Bank'));
 END $$;
+
+-- Days a branch has self-marked as having no collections (followup exempt)
+CREATE TABLE IF NOT EXISTS branch_no_collection_days (
+  branch_name   TEXT NOT NULL,
+  marked_date   DATE NOT NULL,
+  marked_by     INTEGER REFERENCES branch_users(id),
+  marked_at     TIMESTAMPTZ DEFAULT NOW(),
+  note          TEXT,
+  PRIMARY KEY (branch_name, marked_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bnc_date ON branch_no_collection_days (marked_date);

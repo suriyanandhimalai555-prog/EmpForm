@@ -122,7 +122,7 @@ function authenticateToken(req, res, next) {
     req.user = decoded;
     next();
   } catch (err) {
-    return res.status(403).json({ success: false, error: "Invalid or expired token" });
+    return res.status(401).json({ success: false, error: "Invalid or expired token" });
   }
 }
 
@@ -160,7 +160,7 @@ app.post("/api/login", async (req, res) => {
         directorBranches = [user.branch_name.toUpperCase()];
       }
     }
-    const token = jwt.sign({ id: user.id, branch: branchValue, email: user.email, role, directorBranches }, JWT_SECRET, { expiresIn: '1d' });
+    const token = jwt.sign({ id: user.id, branch: branchValue, email: user.email, role, directorBranches }, JWT_SECRET, { expiresIn: '12d' });
     // Derive readable director name from email (e.g. "cperumal.director@..." → "C PERUMAL")
     const directorName = role === 'director'
       ? user.email.split('@')[0].replace('.director', '').replace(/\./g, ' ').toUpperCase()
@@ -265,6 +265,12 @@ app.post("/api/entries", async (req, res) => {
       payment_mode === "Cash+Bank" ? Number(cash_amount) : null,
       payment_mode === "Cash+Bank" ? Number(bank_amount) : null,
     ]);
+
+    // If branch had marked "no collections" for this entry's date, clear it — a submitted entry proves otherwise
+    await client.query(
+      "DELETE FROM branch_no_collection_days WHERE branch_name=$1 AND marked_date=$2",
+      [normalizedBranch, entry_date]
+    );
 
     await client.query("COMMIT");
     return res.status(201).json({
@@ -611,6 +617,53 @@ app.post("/api/admin/reset-password", authenticateToken, requireManagement, asyn
   }
 });
 
+// Helper: today in IST as YYYY-MM-DD
+function todayIST() {
+  return new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0];
+}
+
+// GET /api/no-collection/me — branch reads whether today is marked
+app.get("/api/no-collection/me", authenticateToken, async (req, res) => {
+  if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
+  const date   = todayIST();
+  const branch = (req.user.branch || "").toUpperCase();
+  const { rows } = await pool.query(
+    "SELECT marked_at FROM branch_no_collection_days WHERE branch_name=$1 AND marked_date=$2",
+    [branch, date]
+  );
+  return res.json({ success: true, date, marked: rows.length > 0, markedAt: rows[0]?.marked_at || null });
+});
+
+// POST /api/no-collection — branch marks today as no collections
+app.post("/api/no-collection", authenticateToken, async (req, res) => {
+  if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
+  const date   = todayIST();
+  const branch = (req.user.branch || "").toUpperCase();
+  const { rows: existing } = await pool.query(
+    "SELECT 1 FROM customer_entries WHERE UPPER(branch_name)=$1 AND (created_at AT TIME ZONE 'Asia/Kolkata')::date = $2::date LIMIT 1",
+    [branch, date]
+  );
+  if (existing.length) return res.status(400).json({ success: false, error: "Cannot mark — entries already exist for today" });
+  await pool.query(
+    `INSERT INTO branch_no_collection_days (branch_name, marked_date, marked_by, note)
+     VALUES ($1, $2, $3, $4) ON CONFLICT (branch_name, marked_date) DO NOTHING`,
+    [branch, date, req.user.id || null, req.body?.note || null]
+  );
+  return res.json({ success: true, date, marked: true });
+});
+
+// DELETE /api/no-collection — branch undoes today's mark
+app.delete("/api/no-collection", authenticateToken, async (req, res) => {
+  if (req.user.role !== "branch") return res.status(403).json({ success: false, error: "Branch role only" });
+  const date   = todayIST();
+  const branch = (req.user.branch || "").toUpperCase();
+  await pool.query(
+    "DELETE FROM branch_no_collection_days WHERE branch_name=$1 AND marked_date=$2",
+    [branch, date]
+  );
+  return res.json({ success: true, date, marked: false });
+});
+
 // GET /api/follow-up?date=YYYY-MM-DD  (followup / md / management)
 app.get("/api/follow-up", authenticateToken, async (req, res) => {
   const allowed = ["followup", "md", "management"];
@@ -640,8 +693,16 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
     );
     const everSet = new Set(everRows.map(r => r.branch_name));
 
-    const submitted  = allBranches.filter(b => submittedSet.has(b));
-    const missing    = allBranches.filter(b => !submittedSet.has(b));
+    // Branches that marked themselves as having no collections for this date
+    const { rows: noCollRows } = await pool.query(
+      "SELECT UPPER(branch_name) AS branch_name FROM branch_no_collection_days WHERE marked_date = $1::date",
+      [date]
+    );
+    const noCollSet = new Set(noCollRows.map(r => r.branch_name));
+
+    const submitted    = allBranches.filter(b => submittedSet.has(b));
+    const noCollection = allBranches.filter(b => noCollSet.has(b) && !submittedSet.has(b));
+    const missing      = allBranches.filter(b => !submittedSet.has(b) && !noCollSet.has(b));
     const neverEntered = allBranches.filter(b => !everSet.has(b));
 
     return res.json({
@@ -649,11 +710,13 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
       date,
       submitted,
       missing,
+      noCollection,
       neverEntered,
-      submittedCount:    submitted.length,
-      missingCount:      missing.length,
-      neverEnteredCount: neverEntered.length,
-      totalBranches:     allBranches.length,
+      submittedCount:      submitted.length,
+      missingCount:        missing.length,
+      noCollectionCount:   noCollection.length,
+      neverEnteredCount:   neverEntered.length,
+      totalBranches:       allBranches.length,
     });
   } catch (e) {
     console.error("Follow-up error:", e.message);
