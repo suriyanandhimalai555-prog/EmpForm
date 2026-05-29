@@ -139,9 +139,10 @@ function requireManagement(req, res, next) {
 app.post("/api/login", async (req, res) => {
   const { email, password } = req.body;
   if (!email || !password) return res.status(400).json({ success: false, error: "Missing email or password" });
-  
+
   try {
-    const { rows } = await pool.query("SELECT * FROM branch_users WHERE email = $1", [email]);
+    // Case-insensitive, whitespace-tolerant email match so login never depends on how it's typed.
+    const { rows } = await pool.query("SELECT * FROM branch_users WHERE LOWER(email) = LOWER($1)", [email.trim()]);
     if (rows.length === 0) return res.status(401).json({ success: false, error: "Invalid email or password" });
     
     const user = rows[0];
@@ -180,7 +181,7 @@ app.post("/api/change-password", async (req, res) => {
   }
 
   try {
-    const { rows } = await pool.query("SELECT * FROM branch_users WHERE email = $1", [email]);
+    const { rows } = await pool.query("SELECT * FROM branch_users WHERE LOWER(email) = LOWER($1)", [email.trim()]);
     if (rows.length === 0) return res.status(401).json({ success: false, error: "Invalid email or current password" });
     
     const user = rows[0];
@@ -654,6 +655,12 @@ function todayIST() {
   return new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0];
 }
 
+// GET /api/today — authoritative current date (IST). The form trusts this over the
+// device clock so a misconfigured branch device can't save a wrong entry_date.
+app.get("/api/today", (_req, res) => {
+  return res.json({ success: true, date: todayIST() });
+});
+
 // Validate a YYYY-MM-DD string; return it or null
 function normalizeDate(value) {
   if (typeof value !== "string") return null;
@@ -718,7 +725,7 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
     return res.status(403).json({ success: false, error: "Access denied" });
   }
 
-  const date = req.query.date || new Date().toLocaleDateString("en-CA");
+  const date = req.query.date || todayIST();
 
   try {
     // Active branch accounts (role = 'branch') — these are the ones who should submit
@@ -727,9 +734,9 @@ app.get("/api/follow-up", authenticateToken, async (req, res) => {
     );
     const allBranches = [...new Set(branchRows.map(r => r.branch_name))];
 
-    // Branches that actually submitted (created_at) on this date in IST
+    // Branches that submitted for this date — by FORM date (entry_date), not when typed in
     const { rows: submittedRows } = await pool.query(
-      "SELECT DISTINCT UPPER(branch_name) AS branch_name FROM customer_entries WHERE (created_at AT TIME ZONE 'Asia/Kolkata')::date = $1::date",
+      "SELECT DISTINCT UPPER(branch_name) AS branch_name FROM customer_entries WHERE entry_date = $1::date",
       [date]
     );
     const submittedSet = new Set(submittedRows.map(r => r.branch_name));

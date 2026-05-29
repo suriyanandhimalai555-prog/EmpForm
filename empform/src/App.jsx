@@ -62,6 +62,11 @@ const formatDateToDDMMYYYY = (isoString) => {
   return `${String(d.getDate()).padStart(2, "0")}/${String(d.getMonth() + 1).padStart(2, "0")}/${d.getFullYear()}`;
 };
 
+// Today's date as YYYY-MM-DD in India time (IST), independent of the device timezone.
+const todayISTStr = () => new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+// A timestamp's calendar date in IST (used to compare created_at against the form date).
+const dateInIST = (value) => new Date(value).toLocaleDateString("en-CA", { timeZone: "Asia/Kolkata" });
+
 const exportToCSV = (entries) => {
   if (!entries || entries.length === 0) { alert("No entries to export."); return; }
   const headers = [
@@ -92,7 +97,7 @@ const exportToCSV = (entries) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.setAttribute("download", `emp_entries_${new Date().toISOString().split("T")[0]}.csv`);
+  a.setAttribute("download", `emp_entries_${todayISTStr()}.csv`);
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -383,7 +388,7 @@ function Pagination({ total, page, pageSize, onPage, onPageSize }) {
 // ── MD Dashboard ──────────────────────────────────────────────────────────────
 function MDDashboard({ onLogout }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
 
@@ -834,7 +839,7 @@ function ProofLink({ proofUrl }) {
 
 // ── No Collection Toggle ─────────────────────────────────────────────────────
 function NoCollectionToggle({ token, refreshKey, onChange }) {
-  const today = new Date().toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const [dates, setDates]   = useState(null);   // array of marked YYYY-MM-DD, null = loading
   const [open, setOpen]     = useState(false);
   const [pick, setPick]     = useState(today);
@@ -1290,7 +1295,7 @@ function UserManagementPanel({ token }) {
 // ── Management Dashboard ─────────────────────────────────────────────────────
 function ManagementDashboard({ onLogout, token }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
 
@@ -1704,7 +1709,7 @@ function ManagementDashboard({ onLogout, token }) {
 // ── Director Dashboard ────────────────────────────────────────────────────────
 function DirectorDashboard({ onLogout, directorBranches, directorName }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
 
@@ -2047,7 +2052,7 @@ function DirectorDashboard({ onLogout, directorBranches, directorName }) {
 
 // ── Follow Up Dashboard ───────────────────────────────────────────────────────
 function FollowUpDashboard({ onLogout }) {
-  const today = new Date().toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const [date, setDate] = useState(today);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -2274,7 +2279,7 @@ function FollowUpDashboard({ onLogout }) {
 // ── Branch Stats ─────────────────────────────────────────────────────────────
 function BranchStats({ branch, refreshKey, filterDate }) {
   const now = new Date();
-  const today = now.toLocaleDateString("en-CA");
+  const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
   const monthName = periodLabel;
   const selectedDate = filterDate || today;
@@ -2360,7 +2365,7 @@ function BranchStats({ branch, refreshKey, filterDate }) {
 
 // ── Branch EntriesTable ───────────────────────────────────────────────────────
 function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
-  const todayLocal = new Date().toLocaleDateString("en-CA");
+  const todayLocal = todayISTStr();
   const [entries, setEntries]       = useState([]);
   const [loading, setLoading]       = useState(false);
   const [colWidths, startResize]    = useResizableColumns([60, 105, 130, 160, 120, 100, 90, 70, 140, 185, 175, 175, 165, 80, 155]);
@@ -2429,7 +2434,7 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
           <tbody>
             {entries.map(e => {
               const entryDateStr   = String(e.entry_date).slice(0, 10);
-              const createdDateStr = new Date(e.created_at).toLocaleDateString("en-CA");
+              const createdDateStr = dateInIST(e.created_at);
               const createdLater   = createdDateStr > entryDateStr;
               if (e.is_no_collection) return <NoCollectionRow key={e.id} entry={e} blankCols={11} />;
               return (
@@ -2474,7 +2479,7 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
-const todayISO = () => new Date().toISOString().split("T")[0];
+const todayISO = () => todayISTStr();
 
 const initialForm = {
   entry_date: todayISO(), branch_name: "", customer_name: "",
@@ -2503,8 +2508,24 @@ export default function CustomerEntryForm() {
   const [status, setStatus]             = useState(null);
   const [loading, setLoading]           = useState(false);
   const [branchRefreshKey, setBranchRefreshKey] = useState(0);
-  const [filterDate, setFilterDate]     = useState(new Date().toLocaleDateString("en-CA"));
+  const [filterDate, setFilterDate]     = useState(todayISTStr());
   const [proofFile, setProofFile]       = useState(null);
+  const [serverToday, setServerToday]   = useState(todayISTStr());
+
+  // Trust the server's IST date for the form so a wrong device clock/timezone can't
+  // save an entry under the wrong date. Falls back to the client IST value if offline.
+  useEffect(() => {
+    fetch(`${API_BASE}/today`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.date) {
+          setServerToday(d.date);
+          // Only adopt it as the default if the user hasn't picked a date yet.
+          setForm(f => (f.entry_date === todayISO() ? { ...f, entry_date: d.date } : f));
+        }
+      })
+      .catch(() => {});
+  }, []);
 
   // Force logout when any authFetch detects an expired/invalid token
   useEffect(() => {
@@ -2618,7 +2639,7 @@ export default function CustomerEntryForm() {
       const data = await res.json();
       if (data.success) {
         setStatus({ type: "success", msg: `Entry saved! S.No ${data.serial_number}` });
-        setForm({ ...initialForm, entry_date: todayISO(), branch_name: user.branch });
+        setForm({ ...initialForm, entry_date: serverToday, branch_name: user.branch });
         setProofFile(null);
         window.scrollTo({ top: 0, behavior: "smooth" });
         setBranchRefreshKey(k => k + 1);
@@ -2701,7 +2722,7 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min="2024-01-01" max={todayISO()} />
+          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min="2024-01-01" max={serverToday} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
