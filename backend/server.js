@@ -150,21 +150,23 @@ app.post("/api/login", async (req, res) => {
     if (!match) return res.status(401).json({ success: false, error: "Invalid email or password" });
     
     const role = user.role || 'branch';
-    // For directors: branch_name stores a JSON array of branches
+    // Directors and GMs both oversee a fixed set of branches stored as a JSON array in
+    // branch_name, and use the same branch-list filtering on the frontend.
+    const isBranchGroupRole = role === 'director' || role === 'gm';
     let branchValue = user.branch_name.toUpperCase();
     let directorBranches = null;
-    if (role === 'director') {
+    if (isBranchGroupRole) {
       try {
         directorBranches = JSON.parse(user.branch_name); // array of branch strings
-        branchValue = 'DIRECTOR';
+        branchValue = role.toUpperCase();
       } catch (e) {
         directorBranches = [user.branch_name.toUpperCase()];
       }
     }
     const token = jwt.sign({ id: user.id, branch: branchValue, email: user.email, role, directorBranches }, JWT_SECRET, { expiresIn: '12d' });
-    // Derive readable director name from email (e.g. "cperumal.director@..." → "C PERUMAL")
-    const directorName = role === 'director'
-      ? user.email.split('@')[0].replace('.director', '').replace(/\./g, ' ').toUpperCase()
+    // Derive readable name from email (e.g. "cperumal.director@..." → "C PERUMAL", "siva.gm@..." → "SIVA")
+    const directorName = isBranchGroupRole
+      ? user.email.split('@')[0].replace('.director', '').replace('.gm', '').replace(/\./g, ' ').toUpperCase()
       : undefined;
     return res.json({ success: true, token, branch: branchValue, email: user.email, role, directorBranches, ...(directorName ? { directorName } : {}) });
   } catch(e) {

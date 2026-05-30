@@ -1707,7 +1707,7 @@ function ManagementDashboard({ onLogout, token }) {
 }
 
 // ── Director Dashboard ────────────────────────────────────────────────────────
-function DirectorDashboard({ onLogout, directorBranches, directorName }) {
+function DirectorDashboard({ onLogout, directorBranches, directorName, roleLabel = "Director" }) {
   const now = new Date();
   const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
@@ -1789,13 +1789,13 @@ function DirectorDashboard({ onLogout, directorBranches, directorName }) {
           <img src="/AVG_logo.jpeg" alt="Logo" className="admin-logo" />
           <div className="admin-brand">
             <span className="admin-brand-name">Agilavetri PrimeTech</span>
-            <span className="admin-brand-sub">Director Dashboard — {directorName}</span>
+            <span className="admin-brand-sub">{roleLabel} Dashboard — {directorName}</span>
           </div>
         </div>
         <div className="admin-topbar-right">
           <div className="admin-user-badge" style={{ background: "#eff6ff", color: "#1d4ed8", border: "1px solid #bfdbfe" }}>
             <span>🏢</span>
-            <span>Director</span>
+            <span>{roleLabel}</span>
           </div>
           <button className="admin-logout-btn" onClick={onLogout}>Logout</button>
         </div>
@@ -2654,20 +2654,22 @@ export default function CustomerEntryForm() {
   };
 
   if (!user) return <Login onLogin={(u) => {
-    // Persist director info to localStorage when logging in
-    if (u.role === "director" && u.directorBranches) {
+    // Persist director/GM info to localStorage when logging in (both use a branch list)
+    if ((u.role === "director" || u.role === "gm") && u.directorBranches) {
       localStorage.setItem("directorBranches", JSON.stringify(u.directorBranches));
       localStorage.setItem("directorName", u.directorName || "");
     }
     setUser(u);
   }} />;
 
-  if (user.role === "director" && user.directorBranches) {
+  if ((user.role === "director" || user.role === "gm") && user.directorBranches) {
+    const isGM = user.role === "gm";
     return (
       <DirectorDashboard
         onLogout={handleLogout}
         directorBranches={user.directorBranches}
-        directorName={user.directorName || "Director"}
+        directorName={user.directorName || (isGM ? "GM" : "Director")}
+        roleLabel={isGM ? "GM" : "Director"}
       />
     );
  }
