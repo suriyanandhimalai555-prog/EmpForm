@@ -173,6 +173,18 @@ BEGIN
   END IF;
 END $$;
 
+-- Add proof_urls (JSON array) for multiple payment-proof attachments (up to 3).
+-- proof_url is kept as the first/primary image for backward compatibility.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_name='customer_entries' AND column_name='proof_urls'
+  ) THEN
+    ALTER TABLE customer_entries ADD COLUMN proof_urls JSONB;
+  END IF;
+END $$;
+
 -- Add gold_quantity for Gold Coin Savings (max 15) and Jewel Savings (max 19) Single packages
 DO $$
 BEGIN

@@ -1459,6 +1459,16 @@ textarea.field-input {
   flex-direction: column;
   gap: 0.4rem;
 }
+.proof-chip-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.proof-view-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+}
 .proof-upload-label {
   display: inline-flex;
   align-items: center;

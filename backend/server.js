@@ -111,6 +111,15 @@ function validateEntry(body) {
   return null;
 }
 
+// Normalize payment-proof attachments into an array of up to 3 valid URL strings.
+// Accepts either the new `proof_urls` array or the legacy single `proof_url`.
+function normalizeProofUrls(body) {
+  let urls = [];
+  if (Array.isArray(body.proof_urls)) urls = body.proof_urls;
+  else if (body.proof_url) urls = [body.proof_url];
+  return urls.filter((u) => typeof u === "string" && u.trim()).slice(0, 3);
+}
+
 // ── Auth Middleware ───────────────────────────────────────────────────────────
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
@@ -214,10 +223,12 @@ app.post("/api/entries", async (req, res) => {
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
     gold_package, gold_quantity,
-    proof_url, cash_amount, bank_amount,
+    cash_amount, bank_amount,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
+  const proofUrls = normalizeProofUrls(req.body);
+  const primaryProofUrl = proofUrls[0] || null;
 
   const insertSql = `
     INSERT INTO customer_entries (
@@ -228,9 +239,10 @@ app.post("/api/entries", async (req, res) => {
       higher_official, higher_official_emp_id, higher_official_role,
       notes,
       land_kind_of_payment, land_site_name, land_site_number, land_layout,
-      gold_package, gold_quantity, proof_url, cash_amount, bank_amount
+      gold_package, gold_quantity, proof_url, cash_amount, bank_amount,
+      proof_urls
     ) VALUES (
-      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25
+      $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26
     ) RETURNING id`;
 
   const client = await pool.connect();
@@ -264,9 +276,10 @@ app.post("/api/entries", async (req, res) => {
       higher_official || null, higher_official_emp_id || null, higher_official_role || null,
       notes || null,
       land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
-      gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
+      gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), primaryProofUrl,
       payment_mode === "Cash+Bank" ? Number(cash_amount) : null,
       payment_mode === "Cash+Bank" ? Number(bank_amount) : null,
+      proofUrls.length ? JSON.stringify(proofUrls) : null,
     ]);
 
     // If branch had marked "no collections" for this entry's date, clear it — a submitted entry proves otherwise
@@ -535,10 +548,12 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
     notes,
     land_kind_of_payment, land_site_name, land_site_number, land_layout,
     gold_package, gold_quantity,
-    proof_url, cash_amount, bank_amount,
+    cash_amount, bank_amount,
   } = req.body;
 
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
+  const proofUrls = normalizeProofUrls(req.body);
+  const primaryProofUrl = proofUrls[0] || null;
 
   const client = await pool.connect();
   try {
@@ -587,7 +602,7 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         notes=$16,
         land_kind_of_payment=$17, land_site_name=$18, land_site_number=$19, land_layout=$20,
         gold_package=$21, gold_quantity=$22, proof_url=$23,
-        cash_amount=$24, bank_amount=$25, updated_at=NOW()
+        cash_amount=$24, bank_amount=$25, proof_urls=$27, updated_at=NOW()
       WHERE id=$26`,
       [
         serialNumber, entry_date, normalizedBranch, customer_name,
@@ -597,10 +612,11 @@ app.put("/api/entries/:id", authenticateToken, requireManagement, async (req, re
         higher_official || null, higher_official_emp_id || null, higher_official_role || null,
         notes || null,
         land_kind_of_payment || null, land_site_name || null, land_site_number || null, land_layout || null,
-        gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), proof_url || null,
+        gold_package || null, (gold_quantity !== undefined && gold_quantity !== "" ? parseInt(gold_quantity) : null), primaryProofUrl,
         payment_mode === "Cash+Bank" ? Number(cash_amount) : null,
         payment_mode === "Cash+Bank" ? Number(bank_amount) : null,
         entryId,
+        proofUrls.length ? JSON.stringify(proofUrls) : null,
       ]
     );
 

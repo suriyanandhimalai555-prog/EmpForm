@@ -689,7 +689,7 @@ function MDDashboard({ onLogout }) {
                             {e.payment_mode}
                           </span>
                         </td>
-                        <td><ProofLink proofUrl={e.proof_url} /></td>
+                        <td><ProofLink proofUrl={e.proof_url} proofUrls={e.proof_urls} /></td>
                         <td>
                           <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                             {e.scheme_type}
@@ -745,54 +745,79 @@ function ConfirmDialog({ title, message, onConfirm, onCancel, loading }) {
 // ── Proof Uploader ────────────────────────────────────────────────────────────
 const PROOF_ALLOWED_TYPES = ["image/png", "image/jpeg", "image/jpg", "image/webp", "image/gif", "application/pdf"];
 const PROOF_MAX_BYTES = 5 * 1024 * 1024;
+const PROOF_MAX_COUNT = 3;
 
-// pendingFile = File object (not yet uploaded), existingUrl = already-saved S3 URL
-function ProofUploader({ paymentMode, pendingFile, existingUrl, onFileChange, onClear }) {
+// Derive a friendly display name from a stored S3 URL (strips the "<uuid>-" prefix)
+const proofUrlName = (url) => url.split("/").pop().slice(37) || url.split("/").pop();
+
+// Upload one File to S3 via the presign endpoint; resolves to the public file URL.
+async function uploadProofFile(file, paymentMode, token) {
+  const presignRes = await authFetch(`${API_BASE}/uploads/presign`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ filename: file.name, contentType: file.type, paymentMode: paymentMode === "Cash+Bank" ? "Bank" : paymentMode }),
+  });
+  const presignData = await presignRes.json();
+  if (!presignData.success) throw new Error(presignData.error || "Failed to prepare upload");
+  const { uploadUrl, fields, fileUrl } = presignData;
+  const fd = new FormData();
+  Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
+  fd.append("file", file);
+  const uploadRes = await fetch(uploadUrl, { method: "POST", body: fd });
+  if (!uploadRes.ok) throw new Error("Proof upload failed. Please try again.");
+  return fileUrl;
+}
+
+// Supports up to 3 payment proofs. existingUrls = already-saved S3 URLs (edit mode),
+// pendingFiles = File objects not yet uploaded. Combined count is capped at PROOF_MAX_COUNT.
+function ProofUploader({ paymentMode, pendingFiles = [], existingUrls = [], onAddFiles, onRemovePending, onRemoveExisting }) {
   const [error, setError] = useState("");
   const inputRef = useRef(null);
+  const total = pendingFiles.length + existingUrls.length;
 
   const handleChange = (e) => {
-    const file = e.target.files[0];
-    if (!file) return;
-    setError("");
-    if (file.size > PROOF_MAX_BYTES) {
-      setError("File must be under 5 MB");
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
-    if (!PROOF_ALLOWED_TYPES.includes(file.type)) {
-      setError("Only images (PNG, JPG, WebP, GIF) and PDFs are allowed");
-      if (inputRef.current) inputRef.current.value = "";
-      return;
-    }
-    onFileChange(file);
-  };
-
-  const handleClear = () => {
-    onClear();
-    setError("");
+    const files = Array.from(e.target.files || []);
     if (inputRef.current) inputRef.current.value = "";
+    if (!files.length) return;
+    setError("");
+    let room = PROOF_MAX_COUNT - total;
+    if (room <= 0) { setError(`You can attach up to ${PROOF_MAX_COUNT} proofs only`); return; }
+    const accepted = [];
+    for (const file of files) {
+      if (accepted.length >= room) { setError(`You can attach up to ${PROOF_MAX_COUNT} proofs only`); break; }
+      if (file.size > PROOF_MAX_BYTES) { setError(`${file.name}: must be under 5 MB`); continue; }
+      if (!PROOF_ALLOWED_TYPES.includes(file.type)) { setError(`${file.name}: only images (PNG, JPG, WebP, GIF) and PDFs are allowed`); continue; }
+      accepted.push(file);
+    }
+    if (accepted.length) onAddFiles(accepted);
   };
-
-  const displayName = pendingFile
-    ? pendingFile.name
-    : (existingUrl ? (existingUrl.split("/").pop().slice(37) || existingUrl.split("/").pop()) : "");
-  const hasSelection = !!pendingFile || !!existingUrl;
 
   return (
     <div className="proof-uploader">
       <div className="field-label">
         Payment Proof <span style={{ color: "#dc2626" }}>*</span>
+        <span style={{ color: "var(--text-muted)", fontWeight: 400 }}> (up to {PROOF_MAX_COUNT})</span>
       </div>
-      {hasSelection ? (
-        <div className="proof-chip">
-          <span className="proof-filename">{displayName}</span>
-          <button type="button" className="proof-remove-btn" onClick={handleClear}>&times;</button>
+      {total > 0 && (
+        <div className="proof-chip-list">
+          {existingUrls.map((url, i) => (
+            <div className="proof-chip" key={`u-${i}`}>
+              <span className="proof-filename">{proofUrlName(url)}</span>
+              <button type="button" className="proof-remove-btn" onClick={() => onRemoveExisting(i)}>&times;</button>
+            </div>
+          ))}
+          {pendingFiles.map((file, i) => (
+            <div className="proof-chip" key={`f-${i}`}>
+              <span className="proof-filename">{file.name}</span>
+              <button type="button" className="proof-remove-btn" onClick={() => onRemovePending(i)}>&times;</button>
+            </div>
+          ))}
         </div>
-      ) : (
+      )}
+      {total < PROOF_MAX_COUNT && (
         <label className="proof-upload-label">
-          <>📎 Choose {paymentMode} proof (image or PDF, max 5 MB)</>
-          <input ref={inputRef} type="file" accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
+          <>📎 {total === 0 ? `Choose ${paymentMode} proof` : "Add another proof"} (image or PDF, max 5 MB)</>
+          <input ref={inputRef} type="file" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf"
             onChange={handleChange} style={{ display: "none" }} />
         </label>
       )}
@@ -802,9 +827,9 @@ function ProofUploader({ paymentMode, pendingFile, existingUrl, onFileChange, on
 }
 
 // ── Proof Link (view signed S3 URL) ──────────────────────────────────────────
-function ProofLink({ proofUrl }) {
+// Single proof: renders one "View" button. Multiple proofs: "View 1", "View 2"…
+function ProofViewButton({ proofUrl, label }) {
   const [loading, setLoading] = useState(false);
-  if (!proofUrl) return <span style={{ color: "var(--text-muted)" }}>-</span>;
 
   const handleView = async () => {
     setLoading(true);
@@ -832,8 +857,23 @@ function ProofLink({ proofUrl }) {
 
   return (
     <button className="proof-view-btn" onClick={handleView} disabled={loading}>
-      {loading ? "…" : "View"}
+      {loading ? "…" : label}
     </button>
+  );
+}
+
+// Accepts the legacy single `proofUrl` and/or the new `proofUrls` array.
+function ProofLink({ proofUrl, proofUrls }) {
+  const urls = (Array.isArray(proofUrls) && proofUrls.length)
+    ? proofUrls
+    : (proofUrl ? [proofUrl] : []);
+  if (!urls.length) return <span style={{ color: "var(--text-muted)" }}>-</span>;
+  return (
+    <div className="proof-view-list">
+      {urls.map((u, i) => (
+        <ProofViewButton key={i} proofUrl={u} label={urls.length > 1 ? `View ${i + 1}` : "View"} />
+      ))}
+    </div>
   );
 }
 
@@ -993,14 +1033,19 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
   });
   const [saving, setSaving]               = useState(false);
   const [error, setError]                 = useState("");
-  const [pendingProofFile, setPendingProofFile] = useState(null);
+  // Already-saved proofs (S3 URLs) vs newly-picked files awaiting upload.
+  const [existingProofUrls, setExistingProofUrls] = useState(
+    Array.isArray(entry.proof_urls) && entry.proof_urls.length
+      ? entry.proof_urls
+      : (entry.proof_url ? [entry.proof_url] : [])
+  );
+  const [pendingProofFiles, setPendingProofFiles] = useState([]);
 
   const set = (field) => (e) => setForm(prev => ({
     ...prev,
     [field]: e.target.value,
     ...(field === "scheme_type" ? { land_kind_of_payment: "", land_site_name: "", land_layout: "", land_site_number: "", gold_package: "", gold_quantity: "" } : {}),
     ...(field === "land_site_name" ? { land_layout: "" } : {}),
-    ...(field === "payment_mode" && e.target.value === "Cash" ? { proof_url: "" } : {}),
     ...(field === "payment_mode" && e.target.value !== "Cash+Bank" ? { cash_amount: "", bank_amount: "" } : {}),
     ...(field === "gold_package" && e.target.value !== "Single" ? { gold_quantity: "" } : {}),
   }));
@@ -1016,31 +1061,21 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
       }
     }
 
-    let proofUrl = form.proof_url || null;
-    if (pendingProofFile) {
+    let proofUrls = [...existingProofUrls];
+    if (pendingProofFiles.length) {
       try {
-        const presignRes = await authFetch(`${API_BASE}/uploads/presign`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-          body: JSON.stringify({ filename: pendingProofFile.name, contentType: pendingProofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
-        });
-        const presignData = await presignRes.json();
-        if (!presignData.success) { setError(presignData.error || "Failed to prepare upload"); setSaving(false); return; }
-        const { uploadUrl, fields, fileUrl } = presignData;
-        const fd = new FormData();
-        Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
-        fd.append("file", pendingProofFile);
-        const uploadRes = await fetch(uploadUrl, { method: "POST", body: fd });
-        if (!uploadRes.ok) { setError("Proof upload failed. Please try again."); setSaving(false); return; }
-        proofUrl = fileUrl;
-      } catch { setError("Upload error. Check your connection."); setSaving(false); return; }
+        for (const file of pendingProofFiles) {
+          proofUrls.push(await uploadProofFile(file, form.payment_mode, token));
+        }
+      } catch (err) { setError(err.message || "Upload error. Check your connection."); setSaving(false); return; }
     }
+    proofUrls = proofUrls.slice(0, PROOF_MAX_COUNT);
 
     try {
       const res = await authFetch(`${API_BASE}/entries/${entry.id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
-        body: JSON.stringify({ ...form, proof_url: proofUrl }),
+        body: JSON.stringify({ ...form, proof_url: proofUrls[0] || null, proof_urls: proofUrls }),
       });
       const data = await res.json();
       if (data.success) { onSave(); onClose(); }
@@ -1069,7 +1104,7 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
           <SelectInput label="Payment Mode" required value={form.payment_mode}
-            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setPendingProofFile(null); }}
+            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") { setPendingProofFiles([]); setExistingProofUrls([]); } }}
             options={["Cash", "Bank", "GPay", "Cash+Bank"]} />
           {form.payment_mode === "Cash+Bank" ? (
             <>
@@ -1098,10 +1133,11 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
           <div style={{ marginTop: "1rem" }}>
             <ProofUploader
               paymentMode={form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode}
-              pendingFile={pendingProofFile}
-              existingUrl={form.proof_url}
-              onFileChange={setPendingProofFile}
-              onClear={() => { setPendingProofFile(null); setForm(f => ({ ...f, proof_url: "" })); }}
+              pendingFiles={pendingProofFiles}
+              existingUrls={existingProofUrls}
+              onAddFiles={(files) => setPendingProofFiles(prev => [...prev, ...files])}
+              onRemovePending={(i) => setPendingProofFiles(prev => prev.filter((_, idx) => idx !== i))}
+              onRemoveExisting={(i) => setExistingProofUrls(prev => prev.filter((_, idx) => idx !== i))}
             />
           </div>
         )}
@@ -1666,7 +1702,7 @@ function ManagementDashboard({ onLogout, token }) {
                                 {e.payment_mode}
                               </span>
                             </td>
-                            <td><ProofLink proofUrl={e.proof_url} /></td>
+                            <td><ProofLink proofUrl={e.proof_url} proofUrls={e.proof_urls} /></td>
                             <td>
                               <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                                 {e.scheme_type}
@@ -2015,7 +2051,7 @@ function DirectorDashboard({ onLogout, directorBranches, directorName, roleLabel
                             {e.payment_mode}
                           </span>
                         </td>
-                        <td><ProofLink proofUrl={e.proof_url} /></td>
+                        <td><ProofLink proofUrl={e.proof_url} proofUrls={e.proof_urls} /></td>
                         <td>
                           <span className="scheme-tag" style={{ background: `${color}18`, color, borderColor: `${color}40` }}>
                             {e.scheme_type}
@@ -2460,7 +2496,7 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
                     )}
                   </td>
                   <td style={{ padding: "0.5rem" }}>{e.payment_mode}</td>
-                  <td style={{ padding: "0.5rem" }}><ProofLink proofUrl={e.proof_url} /></td>
+                  <td style={{ padding: "0.5rem" }}><ProofLink proofUrl={e.proof_url} proofUrls={e.proof_urls} /></td>
                   <td style={{ padding: "0.5rem" }}>{e.transaction_details || "-"}</td>
                   <td style={{ padding: "0.5rem" }}>{e.scheme_type}</td>
                   <td style={{ padding: "0.5rem" }}>{e.referred_by ? `${e.referred_by}${e.referred_by_emp_id ? ` (${e.referred_by_emp_id})` : ""} - ${e.referred_by_role || "No Role"}` : "-"}</td>
@@ -2509,7 +2545,7 @@ export default function CustomerEntryForm() {
   const [loading, setLoading]           = useState(false);
   const [branchRefreshKey, setBranchRefreshKey] = useState(0);
   const [filterDate, setFilterDate]     = useState(todayISTStr());
-  const [proofFile, setProofFile]       = useState(null);
+  const [proofFiles, setProofFiles]     = useState([]);
   const [serverToday, setServerToday]   = useState(todayISTStr());
 
   // Trust the server's IST date for the form so a wrong device clock/timezone can't
@@ -2596,51 +2632,34 @@ export default function CustomerEntryForm() {
         return;
       }
     }
-    if (["GPay", "Bank", "Cash+Bank"].includes(form.payment_mode) && !proofFile) {
-      setStatus({ type: "error", msg: "Please upload a payment proof for GPay / Bank transactions." });
+    if (["GPay", "Bank", "Cash+Bank"].includes(form.payment_mode) && proofFiles.length === 0) {
+      setStatus({ type: "error", msg: "Please upload at least one payment proof for GPay / Bank transactions." });
       return;
     }
 
     setLoading(true);
 
-    let proofUrl = null;
-    if (proofFile) {
+    let proofUrls = [];
+    if (proofFiles.length) {
       try {
-        const presignRes = await authFetch(`${API_BASE}/uploads/presign`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", "Authorization": `Bearer ${user.token}` },
-          body: JSON.stringify({ filename: proofFile.name, contentType: proofFile.type, paymentMode: form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode }),
-        });
-        const presignData = await presignRes.json();
-        if (!presignData.success) {
-          setStatus({ type: "error", msg: presignData.error || "Failed to prepare upload" });
-          setLoading(false); return;
+        for (const file of proofFiles) {
+          proofUrls.push(await uploadProofFile(file, form.payment_mode, user.token));
         }
-        const { uploadUrl, fields, fileUrl } = presignData;
-        const fd = new FormData();
-        Object.entries(fields).forEach(([k, v]) => fd.append(k, v));
-        fd.append("file", proofFile);
-        const uploadRes = await fetch(uploadUrl, { method: "POST", body: fd });
-        if (!uploadRes.ok) {
-          setStatus({ type: "error", msg: "Proof upload failed. Please try again." });
-          setLoading(false); return;
-        }
-        proofUrl = fileUrl;
-      } catch {
-        setStatus({ type: "error", msg: "Upload error. Check your connection." });
+      } catch (err) {
+        setStatus({ type: "error", msg: err.message || "Upload error. Check your connection." });
         setLoading(false); return;
       }
     }
 
     try {
       const res = await fetch(`${API_BASE}/entries`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, proof_url: proofUrl }),
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...form, proof_url: proofUrls[0] || null, proof_urls: proofUrls }),
       });
       const data = await res.json();
       if (data.success) {
         setStatus({ type: "success", msg: `Entry saved! S.No ${data.serial_number}` });
         setForm({ ...initialForm, entry_date: serverToday, branch_name: user.branch });
-        setProofFile(null);
+        setProofFiles([]);
         window.scrollTo({ top: 0, behavior: "smooth" });
         setBranchRefreshKey(k => k + 1);
       } else {
@@ -2729,7 +2748,7 @@ export default function CustomerEntryForm() {
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
           <SelectInput label="Payment Mode" required value={form.payment_mode}
-            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setProofFile(null); }}
+            onChange={e => { set("payment_mode")(e); if (e.target.value === "Cash") setProofFiles([]); }}
             options={["Cash", "Bank", "GPay", "Cash+Bank"]} placeholder="Select mode" />
           {form.payment_mode === "Cash+Bank" ? (
             <>
@@ -2758,10 +2777,11 @@ export default function CustomerEntryForm() {
           <div style={{ marginTop: "1rem" }}>
             <ProofUploader
               paymentMode={form.payment_mode === "Cash+Bank" ? "Bank" : form.payment_mode}
-              pendingFile={proofFile}
-              existingUrl=""
-              onFileChange={setProofFile}
-              onClear={() => setProofFile(null)}
+              pendingFiles={proofFiles}
+              existingUrls={[]}
+              onAddFiles={(files) => setProofFiles(prev => [...prev, ...files].slice(0, PROOF_MAX_COUNT))}
+              onRemovePending={(i) => setProofFiles(prev => prev.filter((_, idx) => idx !== i))}
+              onRemoveExisting={() => {}}
             />
           </div>
         )}
