@@ -2408,7 +2408,7 @@ function EntriesTable({ branch, refreshKey, filterDate, setFilterDate }) {
 
   useEffect(() => {
     setLoading(true);
-    fetch(`${API_BASE}/entries?branch=${encodeURIComponent(branch)}&date_from=${filterDate}&date_to=${filterDate}&page=1&pageSize=200`)
+    fetch(`${API_BASE}/entries?branch=${encodeURIComponent(branch)}&date_from=${filterDate}&date_to=${filterDate}`)
       .then(r => r.json())
       .then(d => { if (d.success) setEntries(d.data); })
       .catch(() => {})

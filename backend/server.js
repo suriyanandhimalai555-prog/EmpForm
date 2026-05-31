@@ -374,7 +374,7 @@ app.get("/api/entries", async (req, res) => {
     // Server-side pagination when page & pageSize are provided
     if (page && pageSize) {
       const pg = Math.max(1, parseInt(page));
-      const ps = Math.max(1, Math.min(200, parseInt(pageSize)));
+      const ps = Math.max(1, Math.min(250, parseInt(pageSize)));
       const offset = (pg - 1) * ps;
 
       const countResult = await pool.query(countSql, allParams);
