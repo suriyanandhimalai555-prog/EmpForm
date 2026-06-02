@@ -41,8 +41,9 @@ const schemes = [
   "GLOBAL VETRI CHIT NEW", "GLOBAL VETRI CHIT RENEWAL", "TRADING", "LAND", "BUILDERS",
 ];
 
-const veppurOptions = ["Krishna Garden 3", "Narayanapuram", "Vasantha Garden"];
+const veppurOptions = ["Krishna Garden 3", "Narayanapuram", "Vasantha Garden", "AVG Nagar"];
 const melmalaiyanurOpts = ["VRJ City"];
+const kandapankurichiOpts = ["Andal Nagar"];
 
 const SCHEME_COLORS = {
   "MONTHLY GOLD RENEWAL": "#f59e0b",
@@ -1168,13 +1169,16 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
             <div className="grid-2">
               <SelectInput label="Kind of Payment" value={form.land_kind_of_payment} onChange={set("land_kind_of_payment")} options={["Advance", "Full"]} />
               <SelectInput label="Name of Site" value={form.land_site_name} onChange={set("land_site_name")}
-                options={["Maiylam", "Sunrise City", "Veppur Site", "SR Grand City 2", "Melmalaiyanur Site", "SIV City", "Uchimadu"]} />
+                options={["Maiylam", "Sunrise City", "Veppur Site", "SR Grand City 2", "Melmalaiyanur Site", "SIV City", "Uchimadu", "Kandapankurichi Site"]} />
               <TextInput label="Site Number" value={form.land_site_number} onChange={set("land_site_number")} placeholder="e.g. Plot 42" />
               {form.land_site_name === "Veppur Site" && (
                 <SelectInput label="Veppur Layout" value={form.land_layout} onChange={set("land_layout")} options={veppurOptions} />
               )}
               {form.land_site_name === "Melmalaiyanur Site" && (
                 <SelectInput label="Melmalaiyanur Layout" value={form.land_layout} onChange={set("land_layout")} options={melmalaiyanurOpts} />
+              )}
+              {form.land_site_name === "Kandapankurichi Site" && (
+                <SelectInput label="Kandapankurichi Layout" value={form.land_layout} onChange={set("land_layout")} options={kandapankurichiOpts} />
               )}
             </div>
           </div>
@@ -2817,7 +2821,7 @@ export default function CustomerEntryForm() {
               <SelectInput
                 label="Name of Site"
                 value={form.land_site_name} onChange={set("land_site_name")}
-                options={["Maiylam", "Sunrise City", "Veppur Site", "SR Grand City 2", "Melmalaiyanur Site", "SIV City", "Uchimadu"]}
+                options={["Maiylam", "Sunrise City", "Veppur Site", "SR Grand City 2", "Melmalaiyanur Site", "SIV City", "Uchimadu", "Kandapankurichi Site"]}
                 placeholder="Select site"
               />
               <TextInput label="Site Number" value={form.land_site_number} onChange={set("land_site_number")} placeholder="e.g. Plot 42 / SN-007" />
@@ -2826,6 +2830,9 @@ export default function CustomerEntryForm() {
               )}
               {form.land_site_name === "Melmalaiyanur Site" && (
                 <SelectInput label="Melmalaiyanur Layout" value={form.land_layout} onChange={set("land_layout")} options={melmalaiyanurOpts} placeholder="Select layout" />
+              )}
+              {form.land_site_name === "Kandapankurichi Site" && (
+                <SelectInput label="Kandapankurichi Layout" value={form.land_layout} onChange={set("land_layout")} options={kandapankurichiOpts} placeholder="Select layout" />
               )}
             </div>
           </div>
