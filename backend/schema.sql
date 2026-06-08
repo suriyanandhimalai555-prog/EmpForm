@@ -243,3 +243,14 @@ CREATE TABLE IF NOT EXISTS branch_no_collection_days (
 );
 
 CREATE INDEX IF NOT EXISTS idx_bnc_date ON branch_no_collection_days (marked_date);
+
+-- Global app settings (management-controlled feature flags)
+CREATE TABLE IF NOT EXISTS app_settings (
+  key         TEXT PRIMARY KEY,
+  value       TEXT NOT NULL,
+  updated_by  INTEGER REFERENCES branch_users(id),
+  updated_at  TIMESTAMPTZ DEFAULT NOW()
+);
+-- Seed default: cycle lock is off
+INSERT INTO app_settings (key, value) VALUES ('lock_previous_cycle', 'false')
+  ON CONFLICT (key) DO NOTHING;

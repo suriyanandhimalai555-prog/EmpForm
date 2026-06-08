@@ -1363,6 +1363,36 @@ function ManagementDashboard({ onLogout, token }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize]       = useState(50);
 
+  // Cycle-lock toggle state
+  const [lockEnabled, setLockEnabled]       = useState(false);
+  const [lockLoading, setLockLoading]       = useState(false);
+  const [lockCycleStart, setLockCycleStart] = useState("");
+
+  useEffect(() => {
+    fetch(`${API_BASE}/settings`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success) {
+          setLockEnabled(d.settings?.lock_previous_cycle === "true");
+          setLockCycleStart(d.cycleStart || "");
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const updateLock = async (enabled) => {
+    setLockLoading(true);
+    try {
+      const res = await authFetch(`${API_BASE}/settings/lock-previous-cycle`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ enabled }),
+      });
+      const data = await res.json();
+      if (data.success) setLockEnabled(enabled);
+    } catch { /* ignore */ } finally { setLockLoading(false); }
+  };
+
   useEffect(() => { setCurrentPage(1); }, [filterBranch, dateFrom, dateTo]);
 
   useEffect(() => {
@@ -1483,6 +1513,26 @@ function ManagementDashboard({ onLogout, token }) {
           </div>
         </div>
         <div className="admin-topbar-right">
+          <label
+            className={`cycle-lock-toggle${lockEnabled ? " cycle-lock-toggle--on" : ""}`}
+            title={lockEnabled
+              ? `Cycle lock ON — branches can only enter dates from ${lockCycleStart} onwards`
+              : "Cycle lock OFF — branches can enter any date"}
+            style={{ opacity: lockLoading ? 0.6 : 1, pointerEvents: lockLoading ? "none" : "auto" }}
+          >
+            <input
+              type="checkbox"
+              checked={lockEnabled}
+              onChange={e => updateLock(e.target.checked)}
+              style={{ display: "none" }}
+            />
+            <span className="cycle-lock-track">
+              <span className="cycle-lock-thumb" />
+            </span>
+            <span className="cycle-lock-label">
+              {lockEnabled ? "🔒 Cycle locked" : "🔓 Cycle open"}
+            </span>
+          </label>
           <div className="admin-user-badge mgmt-badge">
             <span>🛡</span>
             <span>Management</span>
@@ -2551,6 +2601,9 @@ export default function CustomerEntryForm() {
   const [filterDate, setFilterDate]     = useState(todayISTStr());
   const [proofFiles, setProofFiles]     = useState([]);
   const [serverToday, setServerToday]   = useState(todayISTStr());
+  // entryFloor: earliest date allowed for entry_date (2024-01-01 by default; tightened to
+  // the current cycle start when management enables the cycle lock).
+  const [entryFloor, setEntryFloor]     = useState("2024-01-01");
 
   // Trust the server's IST date for the form so a wrong device clock/timezone can't
   // save an entry under the wrong date. Falls back to the client IST value if offline.
@@ -2562,6 +2615,18 @@ export default function CustomerEntryForm() {
           setServerToday(d.date);
           // Only adopt it as the default if the user hasn't picked a date yet.
           setForm(f => (f.entry_date === todayISO() ? { ...f, entry_date: d.date } : f));
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  // Fetch app settings to apply cycle lock on the date input (management-controlled).
+  useEffect(() => {
+    fetch(`${API_BASE}/settings`)
+      .then(r => r.json())
+      .then(d => {
+        if (d.success && d.settings?.lock_previous_cycle === "true" && d.cycleStart) {
+          setEntryFloor(d.cycleStart);
         }
       })
       .catch(() => {});
@@ -2616,6 +2681,11 @@ export default function CustomerEntryForm() {
         setStatus({ type: "error", msg: `${label} is required.` });
         return;
       }
+    }
+    // Cycle-lock guard (mirrors backend enforcement)
+    if (form.entry_date < entryFloor) {
+      setStatus({ type: "error", msg: `Entries are locked to the current cycle — dates before ${entryFloor} are not allowed.` });
+      return;
     }
     if (form.payment_mode === "Cash+Bank") {
       const c = Number(form.cash_amount), b = Number(form.bank_amount);
@@ -2747,7 +2817,7 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min="2024-01-01" max={serverToday} />
+          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min={entryFloor} max={serverToday} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />

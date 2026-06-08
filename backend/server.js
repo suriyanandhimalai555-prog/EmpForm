@@ -226,6 +226,16 @@ app.post("/api/entries", async (req, res) => {
     cash_amount, bank_amount,
   } = req.body;
 
+  // Enforce cycle lock: if enabled, reject entries dated before the current cycle start
+  if ((await getSetting("lock_previous_cycle")) === "true") {
+    const floor = currentCycleStartIST();
+    if (entry_date < floor)
+      return res.status(400).json({
+        success: false,
+        error: `Entries are locked to the current cycle — dates before ${floor} are not allowed. Contact management.`,
+      });
+  }
+
   const normalizedBranch = branch_name ? branch_name.toUpperCase() : branch_name;
   const proofUrls = normalizeProofUrls(req.body);
   const primaryProofUrl = proofUrls[0] || null;
@@ -673,10 +683,54 @@ function todayIST() {
   return new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0];
 }
 
+// Helper: start of the current 7th→6th billing cycle, in IST (YYYY-MM-DD)
+function currentCycleStartIST() {
+  const [y, m, d] = todayIST().split("-").map(Number); // m is 1-indexed
+  if (d >= 7) return `${y}-${String(m).padStart(2, "0")}-07`;
+  // Before the 7th — cycle started on the 7th of the previous month
+  const prev = new Date(Date.UTC(y, m - 2, 1)); // m-2 because m is 1-indexed and we go back one month
+  return `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}-07`;
+}
+
+// Helper: read a single app_settings value
+async function getSetting(key) {
+  const { rows } = await pool.query("SELECT value FROM app_settings WHERE key=$1", [key]);
+  return rows[0]?.value ?? null;
+}
+
 // GET /api/today — authoritative current date (IST). The form trusts this over the
 // device clock so a misconfigured branch device can't save a wrong entry_date.
 app.get("/api/today", (_req, res) => {
   return res.json({ success: true, date: todayIST() });
+});
+
+// GET /api/settings — public; branch form reads this on load to get lock state + cycle start
+app.get("/api/settings", async (_req, res) => {
+  try {
+    const { rows } = await pool.query("SELECT key, value FROM app_settings");
+    const settings = Object.fromEntries(rows.map(r => [r.key, r.value]));
+    return res.json({ success: true, settings, cycleStart: currentCycleStartIST() });
+  } catch (e) {
+    console.error("GET /api/settings error:", e.message);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
+});
+
+// PUT /api/settings/lock-previous-cycle — management only
+app.put("/api/settings/lock-previous-cycle", authenticateToken, requireManagement, async (req, res) => {
+  try {
+    const enabled = req.body?.enabled === true;
+    await pool.query(
+      `INSERT INTO app_settings (key, value, updated_by, updated_at)
+       VALUES ('lock_previous_cycle', $1, $2, NOW())
+       ON CONFLICT (key) DO UPDATE SET value=$1, updated_by=$2, updated_at=NOW()`,
+      [String(enabled), req.user.id || null]
+    );
+    return res.json({ success: true, enabled });
+  } catch (e) {
+    console.error("PUT /api/settings/lock-previous-cycle error:", e.message);
+    return res.status(500).json({ success: false, error: "Server error" });
+  }
 });
 
 // Validate a YYYY-MM-DD string; return it or null

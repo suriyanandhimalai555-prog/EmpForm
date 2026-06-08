@@ -477,6 +477,50 @@ textarea.field-input {
   background: #fef2f2;
 }
 
+/* ── Cycle-lock toggle (management topbar) ─────────────────── */
+.cycle-lock-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  cursor: pointer;
+  user-select: none;
+  padding: 0.25rem 0.6rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255,255,255,0.15);
+  transition: all var(--transition);
+}
+.cycle-lock-toggle:hover { border-color: rgba(255,255,255,0.35); }
+
+.cycle-lock-track {
+  width: 2rem;
+  height: 1.1rem;
+  background: rgba(255,255,255,0.2);
+  border-radius: 999px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+.cycle-lock-thumb {
+  position: absolute;
+  top: 0.13rem;
+  left: 0.13rem;
+  width: 0.84rem;
+  height: 0.84rem;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+.cycle-lock-toggle--on .cycle-lock-track { background: #ef4444; }
+.cycle-lock-toggle--on .cycle-lock-thumb { transform: translateX(0.88rem); }
+
+.cycle-lock-label {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  transition: color var(--transition);
+}
+.cycle-lock-toggle--on .cycle-lock-label { color: #ef4444; font-weight: 600; }
+
 /* ── Main Content ─────────────────────────────────────────── */
 .admin-main {
   flex: 1;
