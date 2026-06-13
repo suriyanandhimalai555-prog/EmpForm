@@ -678,6 +678,155 @@ app.post("/api/admin/reset-password", authenticateToken, requireManagement, asyn
   }
 });
 
+// Canonical branch list — must stay in sync with App.jsx `branches` array.
+// Used to validate branch names sent to the assignment endpoints.
+const CANONICAL_BRANCHES = new Set([
+  "AARANI","ANDIMADAM","ANEKAL","ARIYALUR","ARIYANKUPPAM","ATTIBELE","ATTUR",
+  "AVALURPET","BANGARUPALAYAM","BELLARY","CHENGAM","CHITTOOR","CUDDALORE",
+  "DEVANUR","DHARAPURAM","DHARMAPURI","DINDIGUL","ELURU","GINGEE","GOWRIBIDANUR",
+  "GUDUR","HARUR","HASAN","JAMUNAMARATHUR","KALAHASTHI","KALLAKURICHI",
+  "KANDACHIPURAM","KANIYAMBADI","KARAIKAL","KODAD","KRISHNAGIRI","MANDYA",
+  "MELMALAIYANUR","MIRIYALAGUDA","MOONGIL THURAIPATTU","MYSORE","NAIDUPETA",
+  "NALGONDA","NELLORE","NETTAPAKKAM","NEYVELI","ONGOLE","OTTACHATHIRAM",
+  "PALACODE","PALAMANER","PALANI","PANRUTI","PAPPREDY PATTI","PERAMBALUR",
+  "POLUR","PUTTUR","RANIPET","SANKARAPURAM","SULLURPET","SURYAPET","THALAIVASAL",
+  "THANDARAMPATTU","THENMATHIMANGALAM","THIRUKKANUR","THIRUKOVILUR","THIRUPATHI",
+  "THIRUPATHUR","THIRUTHANI","THITAKUDI","TINDIVANAM","TIRUCHI","TIRUPUR",
+  "TIRUVANNAMALAI","UDUMALPET","ULUNDURPET","UTHANGARAI","V KOTA","VEPPUR",
+  "VIJAYAWADA","VILLIANUR","VILLUPURAM","VIRUTHACHALAM",
+]);
+
+// GET /api/me/branches — returns the caller's current branch list fresh from DB.
+// Directors and GMs should call this on dashboard mount so stale JWT data is replaced.
+app.get("/api/me/branches", authenticateToken, async (req, res) => {
+  const { role, id } = req.user;
+  if (role !== "director" && role !== "gm") {
+    return res.json({ success: true, branches: null });
+  }
+  try {
+    const { rows } = await pool.query(
+      "SELECT branch_name FROM branch_users WHERE id = $1",
+      [id]
+    );
+    if (!rows.length) return res.status(404).json({ success: false, error: "User not found" });
+    let branches = [];
+    try { branches = JSON.parse(rows[0].branch_name); } catch (_) {}
+    if (!Array.isArray(branches)) branches = [];
+    return res.json({ success: true, branches });
+  } catch (e) {
+    console.error("Me branches error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
+// GET /api/admin/assignments — list all director and gm accounts (management only)
+app.get("/api/admin/assignments", authenticateToken, requireManagement, async (_req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, email, branch_name, role
+       FROM branch_users
+       WHERE role IN ('director', 'gm')
+       ORDER BY role DESC, email ASC`
+    );
+    const data = result.rows.map(row => {
+      let branches = [];
+      try { branches = JSON.parse(row.branch_name); } catch (_) {}
+      if (!Array.isArray(branches)) branches = row.branch_name ? [row.branch_name] : [];
+      return { id: row.id, email: row.email, role: row.role, branches };
+    });
+    return res.json({ success: true, data });
+  } catch (e) {
+    console.error("Fetch assignments error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
+// PUT /api/admin/assignments/:id — update branch list for a director or gm (management only)
+app.put("/api/admin/assignments/:id", authenticateToken, requireManagement, async (req, res) => {
+  const { id } = req.params;
+  const { branches } = req.body;
+
+  if (!Array.isArray(branches)) {
+    return res.status(400).json({ success: false, error: "branches must be an array" });
+  }
+  const upper = branches.map(b => (typeof b === "string" ? b.trim().toUpperCase() : ""));
+  const invalid = upper.filter(b => b && !CANONICAL_BRANCHES.has(b));
+  if (invalid.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: `Unknown branch name(s): ${invalid.join(", ")}. Use canonical spellings.`,
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE branch_users
+       SET branch_name = $1
+       WHERE id = $2 AND role IN ('director', 'gm')
+       RETURNING id, email, role`,
+      [JSON.stringify(upper), Number(id)]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, error: "Director/GM not found" });
+    }
+    return res.json({
+      success: true,
+      message: `Branches updated for ${result.rows[0].email}`,
+      data: { ...result.rows[0], branches: upper },
+    });
+  } catch (e) {
+    console.error("Update assignment error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
+// POST /api/admin/gm — create a new GM account (management only)
+app.post("/api/admin/gm", authenticateToken, requireManagement, async (req, res) => {
+  const { name, branches } = req.body;
+  if (!name || typeof name !== "string" || !name.trim()) {
+    return res.status(400).json({ success: false, error: "name is required" });
+  }
+  if (!Array.isArray(branches) || branches.length === 0) {
+    return res.status(400).json({ success: false, error: "branches must be a non-empty array" });
+  }
+  const upper = branches.map(b => (typeof b === "string" ? b.trim().toUpperCase() : ""));
+  const invalid = upper.filter(b => b && !CANONICAL_BRANCHES.has(b));
+  if (invalid.length > 0) {
+    return res.status(400).json({
+      success: false,
+      error: `Unknown branch name(s): ${invalid.join(", ")}. Use canonical spellings.`,
+    });
+  }
+
+  const cleanName = name.trim();
+  const emailLocal = cleanName.toLowerCase().replace(/\s+/g, ".");
+  const email    = `${emailLocal}.gm@avgprimetech.com`;
+  const namePart = cleanName.replace(/\s+/g, "");
+  const password = namePart.charAt(0).toUpperCase() + namePart.slice(1).toLowerCase() + "@2026";
+
+  try {
+    const hash = await bcrypt.hash(password, 10);
+    const result = await pool.query(
+      `INSERT INTO branch_users (email, password_hash, branch_name, role)
+       VALUES ($1, $2, $3, 'gm')
+       ON CONFLICT (email) DO NOTHING
+       RETURNING id, email, role`,
+      [email, hash, JSON.stringify(upper)]
+    );
+    if (result.rowCount === 0) {
+      return res.status(409).json({ success: false, error: `A GM with email ${email} already exists.` });
+    }
+    return res.status(201).json({
+      success: true,
+      message: `GM account created for ${cleanName}`,
+      data: { id: result.rows[0].id, email, password, branches: upper },
+    });
+  } catch (e) {
+    console.error("Create GM error:", e.message);
+    return res.status(500).json({ success: false, error: "Database error" });
+  }
+});
+
 // Helper: today in IST as YYYY-MM-DD
 function todayIST() {
   return new Date().toLocaleString("en-CA", { timeZone: "Asia/Kolkata" }).split(",")[0];

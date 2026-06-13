@@ -1216,34 +1216,80 @@ textarea.field-input {
   .admin-mid-row { grid-template-columns: 1fr; }
 }
 @media (max-width: 640px) {
-  .admin-main    { padding: 0.75rem 0.75rem 2rem; }
-  .admin-topbar  { padding: 0 1rem; }
-  .admin-brand   { display: none; }
-  .kpi-grid      { grid-template-columns: 1fr 1fr; gap: 0.6rem; }
-  .kpi-value     { font-size: 1.2rem; }
+  .admin-main { padding: 0.75rem 0.75rem 2rem; }
+  .kpi-grid   { grid-template-columns: 1fr 1fr; gap: 0.6rem; }
+  .kpi-value  { font-size: 1.2rem; }
 
-  .admin-filter-bar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.75rem;
-    padding: 1rem;
+  /* ── Topbar wrapper: wrap so each row stacks cleanly ── */
+  .admin-topbar {
+    flex-wrap: wrap;
+    align-items: center;
+    height: auto;
+    padding: 0.45rem 0.75rem 0;
+    gap: 0;
   }
-  .admin-filter-controls {
-    flex-direction: column;
-    width: 100%;
-    gap: 0.6rem;
+
+  /* Row 1 left: logo only */
+  .admin-topbar-left { flex: 0 0 auto; }
+  .admin-brand { display: none; }
+  .admin-logo  { height: 30px; }
+
+  /* Row 1 right: takes remaining width, wraps internally */
+  .admin-topbar-right {
+    flex: 1;
+    flex-direction: row;
+    flex-wrap: wrap;           /* lets cycle-lock drop to its own line inside */
+    justify-content: flex-end;
+    align-items: center;
+    gap: 0.4rem;
   }
-  .admin-filter-controls .field-group {
-    width: 100% !important;
-    min-width: 0 !important;
-    flex: none !important;
+  .mgmt-badge {
+    font-size: 0.7rem !important;
+    padding: 0.2rem 0.5rem !important;
   }
-  .admin-clear-btn {
-    width: 100%;
+  .admin-logout-btn {
+    font-size: 0.75rem;
+    padding: 0.22rem 0.55rem;
+  }
+
+  /* Cycle-lock: breaks to its own line within admin-topbar-right */
+  .cycle-lock-toggle {
+    order: 10;
+    flex: 0 0 100%;            /* full width of admin-topbar-right */
+    justify-content: center;
+    background: #f8fafc;
+    border: 1px solid var(--border-light);
+    border-radius: 8px;
+    padding: 0.35rem 0.75rem;
+    margin-top: 0.2rem;
+  }
+  .cycle-lock-toggle--on {
+    background: #fff1f2;
+    border-color: #fca5a5;
+  }
+  .cycle-lock-label { color: var(--text-secondary); }
+  .cycle-lock-toggle--on .cycle-lock-label { color: #dc2626; }
+
+  /* Row 2: tabs — full width, equal stretch */
+  .admin-topbar-center {
+    display: flex !important;
+    order: 20;
+    flex: 0 0 100%;
+    padding: 0.4rem 0 0.45rem;
+  }
+  .mgmt-tabs { width: 100%; }
+  .mgmt-tab  {
+    flex: 1;
+    font-size: 0.76rem;
+    padding: 0.4rem 0.25rem;
     text-align: center;
   }
-  .admin-topbar-center { display:none; }
-  .mgmt-tabs { width:100%; justify-content:center; }
+
+  /* Filter bar */
+  .admin-filter-bar { flex-direction: column; align-items: stretch; gap: 0.75rem; padding: 1rem; }
+  .admin-filter-controls { flex-direction: column; width: 100%; gap: 0.6rem; }
+  .admin-filter-controls .field-group { width: 100% !important; min-width: 0 !important; flex: none !important; }
+  .admin-clear-btn { width: 100%; text-align: center; }
 }
 
 /* ── Modal Overlay ─────────────────────────────────────── */
@@ -1455,16 +1501,18 @@ textarea.field-input {
   cursor: pointer;
 }
 
-/* ── Mobile: Management tabs below topbar ──────────────── */
+/* ── Tablet: Management tabs wrap below topbar ─────────── */
 @media (max-width: 768px) {
   .admin-topbar {
     flex-wrap: wrap;
+    height: auto;
+    padding-bottom: 0.4rem;
   }
   .admin-topbar-center {
     order: 3;
     width: 100%;
     justify-content: center;
-    padding-top: 0.5rem;
+    padding-top: 0.4rem;
   }
 }
 

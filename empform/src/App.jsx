@@ -1215,6 +1215,320 @@ function EditEntryModal({ entry, onClose, onSave, token }) {
   );
 }
 
+// ── Assignments Panel ────────────────────────────────────────────────────────
+function AssignmentsPanel({ token }) {
+  const [accounts, setAccounts] = useState([]);
+  const [loading, setLoading]   = useState(true);
+  const [feedback, setFeedback] = useState(null);
+  const [editTarget, setEditTarget]   = useState(null); // { id, email, role, branches }
+  const [editBranches, setEditBranches] = useState([]);
+  const [saving, setSaving]     = useState(false);
+  const [showAddGM, setShowAddGM] = useState(false);
+  const [newGMName, setNewGMName]       = useState("");
+  const [newGMBranches, setNewGMBranches] = useState([]);
+  const [addingGM, setAddingGM]   = useState(false);
+  const [newGMCreds, setNewGMCreds] = useState(null); // { email, password }
+
+  const showFeedback = (type, msg) => {
+    setFeedback({ type, msg });
+    setTimeout(() => setFeedback(null), 5000);
+  };
+
+  const fetchAccounts = () => {
+    setLoading(true);
+    authFetch(`${API_BASE}/admin/assignments`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => { if (data.success) setAccounts(data.data); })
+      .catch(() => showFeedback("error", "Failed to load assignments"))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(fetchAccounts, [token]);
+
+  const openEdit = (acct) => {
+    setEditTarget(acct);
+    setEditBranches([...acct.branches]);
+  };
+
+  const toggleBranch = (b) =>
+    setEditBranches(prev =>
+      prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b]
+    );
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      const res = await authFetch(`${API_BASE}/admin/assignments/${editTarget.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ branches: editBranches }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showFeedback("success", data.message);
+        setEditTarget(null);
+        fetchAccounts();
+      } else {
+        showFeedback("error", data.error);
+      }
+    } catch { showFeedback("error", "Network error"); }
+    setSaving(false);
+  };
+
+  const toggleNewGMBranch = (b) =>
+    setNewGMBranches(prev =>
+      prev.includes(b) ? prev.filter(x => x !== b) : [...prev, b]
+    );
+
+  const handleAddGM = async () => {
+    if (!newGMName.trim()) { showFeedback("error", "GM name is required"); return; }
+    if (newGMBranches.length === 0) { showFeedback("error", "Select at least one branch"); return; }
+    setAddingGM(true);
+    try {
+      const res = await authFetch(`${API_BASE}/admin/gm`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+        body: JSON.stringify({ name: newGMName.trim().toUpperCase(), branches: newGMBranches }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setNewGMCreds({ email: data.data.email, password: data.data.password });
+        setNewGMName(""); setNewGMBranches([]); setShowAddGM(false);
+        fetchAccounts();
+      } else {
+        showFeedback("error", data.error);
+      }
+    } catch { showFeedback("error", "Network error"); }
+    setAddingGM(false);
+  };
+
+  const directors = accounts.filter(a => a.role === "director");
+  const gms       = accounts.filter(a => a.role === "gm");
+
+  return (
+    <div className="admin-panel" style={{ marginTop: "1.5rem" }}>
+      <div className="admin-panel-header">
+        <div>
+          <div className="admin-panel-title">Branch Assignments</div>
+          <div className="admin-panel-sub">{directors.length} directors · {gms.length} GMs</div>
+        </div>
+        <button
+          className="action-btn edit-btn"
+          style={{ marginLeft: "auto" }}
+          onClick={() => { setShowAddGM(true); setNewGMCreds(null); setFeedback(null); }}
+        >
+          + Add GM
+        </button>
+      </div>
+
+      {feedback && (
+        <div className={`status-banner ${feedback.type}`} style={{ margin: "0 0 1rem", padding: "0.75rem" }}>
+          {feedback.msg}
+          <button onClick={() => setFeedback(null)} style={{ float: "right", background: "none", border: "none", cursor: "pointer", fontWeight: "bold" }}>&times;</button>
+        </div>
+      )}
+
+      {newGMCreds && (
+        <div className="status-banner success" style={{ margin: "0 0 1rem", padding: "0.75rem", lineHeight: 1.8 }}>
+          <strong>GM created</strong><br />
+          Email: <code>{newGMCreds.email}</code><br />
+          Password: <code>{newGMCreds.password}</code>
+          <button onClick={() => setNewGMCreds(null)} style={{ float: "right", background: "none", border: "none", cursor: "pointer", fontWeight: "bold" }}>&times;</button>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="admin-empty">Loading assignments...</div>
+      ) : (
+        <>
+          {/* Directors table */}
+          <div style={{ marginBottom: "1.5rem" }}>
+            <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "#6366f1", marginBottom: "0.4rem", letterSpacing: "0.04em", textTransform: "uppercase" }}>Directors</div>
+            <div className="admin-table-wrap">
+              <table className="admin-table user-table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Branches ({directors.reduce((s, d) => s + d.branches.length, 0)} total)</th>
+                    <th style={{ width: "100px" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {directors.map(d => (
+                    <tr key={d.id} className="tr-even">
+                      <td style={{ whiteSpace: "nowrap" }}>{d.email}</td>
+                      <td>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                          {d.branches.length === 0
+                            ? <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>No branches</span>
+                            : d.branches.map(b => (
+                                <span key={b} style={{ background: "#ede9fe", color: "#6d28d9", borderRadius: "999px", padding: "0.1rem 0.55rem", fontSize: "0.75rem", fontWeight: 600 }}>{b}</span>
+                              ))
+                          }
+                        </div>
+                      </td>
+                      <td>
+                        <button className="action-btn edit-btn" onClick={() => openEdit(d)}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* GMs table */}
+          <div>
+            <div style={{ fontWeight: 700, fontSize: "0.85rem", color: "#0891b2", marginBottom: "0.4rem", letterSpacing: "0.04em", textTransform: "uppercase" }}>General Managers</div>
+            <div className="admin-table-wrap">
+              <table className="admin-table user-table">
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Branches</th>
+                    <th style={{ width: "100px" }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {gms.map(g => (
+                    <tr key={g.id} className="tr-even">
+                      <td style={{ whiteSpace: "nowrap" }}>{g.email}</td>
+                      <td>
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: "0.3rem" }}>
+                          {g.branches.length === 0
+                            ? <span style={{ color: "#94a3b8", fontSize: "0.8rem" }}>No branches (neutralised)</span>
+                            : g.branches.map(b => (
+                                <span key={b} style={{ background: "#e0f2fe", color: "#0369a1", borderRadius: "999px", padding: "0.1rem 0.55rem", fontSize: "0.75rem", fontWeight: 600 }}>{b}</span>
+                              ))
+                          }
+                        </div>
+                      </td>
+                      <td>
+                        <button className="action-btn edit-btn" onClick={() => openEdit(g)}>Edit</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+
+      {/* Edit branches modal */}
+      {editTarget && (
+        <div className="modal-overlay" onClick={() => setEditTarget(null)}>
+          <div className="modal-card" style={{ maxWidth: "640px", width: "95vw" }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Edit Branches — {editTarget.email}</h3>
+              <button className="modal-close" onClick={() => setEditTarget(null)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <div style={{ marginBottom: "0.75rem", color: "#64748b", fontSize: "0.85rem" }}>
+                Select branches for this {editTarget.role}. Currently {editBranches.length} selected.
+              </div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", maxHeight: "320px", overflowY: "auto", padding: "0.25rem 0" }}>
+                {branches.map(b => {
+                  const selected = editBranches.includes(b);
+                  return (
+                    <button
+                      key={b}
+                      type="button"
+                      onClick={() => toggleBranch(b)}
+                      style={{
+                        borderRadius: "999px",
+                        padding: "0.25rem 0.7rem",
+                        fontSize: "0.78rem",
+                        fontWeight: 600,
+                        cursor: "pointer",
+                        border: selected ? "2px solid #6d28d9" : "2px solid #e2e8f0",
+                        background: selected ? "#ede9fe" : "#f8fafc",
+                        color: selected ? "#6d28d9" : "#64748b",
+                        transition: "all 0.15s",
+                      }}
+                    >
+                      {selected ? "✓ " : ""}{b}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="action-btn" style={{ background: "#e2e8f0", color: "#374151" }} onClick={() => setEditTarget(null)}>Cancel</button>
+              <button className="action-btn edit-btn" onClick={handleSave} disabled={saving}>
+                {saving ? "Saving..." : "Save Changes"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add GM modal */}
+      {showAddGM && (
+        <div className="modal-overlay" onClick={() => setShowAddGM(false)}>
+          <div className="modal-card" style={{ maxWidth: "580px", width: "95vw" }} onClick={e => e.stopPropagation()}>
+            <div className="modal-header">
+              <h3 className="modal-title">Add New GM</h3>
+              <button className="modal-close" onClick={() => setShowAddGM(false)}>&times;</button>
+            </div>
+            <div className="modal-body">
+              <div className="field-group" style={{ marginBottom: "1rem" }}>
+                <label className="field-label">GM Name (UPPERCASE)</label>
+                <input
+                  type="text"
+                  className="field-input"
+                  placeholder="e.g. JOHN DOE"
+                  value={newGMName}
+                  onChange={e => setNewGMName(e.target.value.toUpperCase())}
+                />
+                <div style={{ fontSize: "0.75rem", color: "#94a3b8", marginTop: "0.25rem" }}>
+                  Email will be: {newGMName.trim() ? newGMName.trim().toLowerCase().replace(/\s+/g, ".") + ".gm@avgprimetech.com" : "—"}
+                </div>
+              </div>
+              <div className="field-group">
+                <label className="field-label">Branches ({newGMBranches.length} selected)</label>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem", maxHeight: "240px", overflowY: "auto", padding: "0.25rem 0" }}>
+                  {branches.map(b => {
+                    const selected = newGMBranches.includes(b);
+                    return (
+                      <button
+                        key={b}
+                        type="button"
+                        onClick={() => toggleNewGMBranch(b)}
+                        style={{
+                          borderRadius: "999px",
+                          padding: "0.25rem 0.7rem",
+                          fontSize: "0.78rem",
+                          fontWeight: 600,
+                          cursor: "pointer",
+                          border: selected ? "2px solid #0891b2" : "2px solid #e2e8f0",
+                          background: selected ? "#e0f2fe" : "#f8fafc",
+                          color: selected ? "#0369a1" : "#64748b",
+                          transition: "all 0.15s",
+                        }}
+                      >
+                        {selected ? "✓ " : ""}{b}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+            <div className="modal-actions">
+              <button className="action-btn" style={{ background: "#e2e8f0", color: "#374151" }} onClick={() => setShowAddGM(false)}>Cancel</button>
+              <button className="action-btn edit-btn" onClick={handleAddGM} disabled={addingGM}>
+                {addingGM ? "Creating..." : "Create GM"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── User Management Panel ────────────────────────────────────────────────────
 function UserManagementPanel({ token }) {
   const [users, setUsers] = useState([]);
@@ -1510,6 +1824,9 @@ function ManagementDashboard({ onLogout, token }) {
             <button className={`mgmt-tab ${activeTab === "users" ? "active" : ""}`} onClick={() => setActiveTab("users")}>
               User Management
             </button>
+            <button className={`mgmt-tab ${activeTab === "assignments" ? "active" : ""}`} onClick={() => setActiveTab("assignments")}>
+              Assignments
+            </button>
           </div>
         </div>
         <div className="admin-topbar-right">
@@ -1544,6 +1861,8 @@ function ManagementDashboard({ onLogout, token }) {
       <main className="admin-main">
         {activeTab === "users" ? (
           <UserManagementPanel token={token} />
+        ) : activeTab === "assignments" ? (
+          <AssignmentsPanel token={token} />
         ) : (
           <>
             {/* Filter Bar */}
@@ -1797,7 +2116,7 @@ function ManagementDashboard({ onLogout, token }) {
 }
 
 // ── Director Dashboard ────────────────────────────────────────────────────────
-function DirectorDashboard({ onLogout, directorBranches, directorName, roleLabel = "Director" }) {
+function DirectorDashboard({ onLogout, directorBranches, directorName, roleLabel = "Director", token }) {
   const now = new Date();
   const today = todayISTStr();
   const { periodStart, periodEnd, periodLabel } = getCurrentBillingPeriod(now);
@@ -1815,8 +2134,26 @@ function DirectorDashboard({ onLogout, directorBranches, directorName, roleLabel
   const [pageSize, setPageSize] = useState(50);
   const [colWidths, startResize] = useResizableColumns([60, 100, 140, 160, 120, 110, 90, 70, 185, 170, 170, 160, 130]);
 
+  // Branch list: start from prop (localStorage), then refresh from DB on mount.
+  // This ensures management branch-assignment changes take effect without re-login.
+  const [myBranches, setMyBranches] = useState(directorBranches || []);
+
+  useEffect(() => {
+    if (!token) return;
+    authFetch(`${API_BASE}/me/branches`, {
+      headers: { "Authorization": `Bearer ${token}` },
+    })
+      .then(r => r.json())
+      .then(data => {
+        if (data.success && Array.isArray(data.branches)) {
+          setMyBranches(data.branches);
+          localStorage.setItem("directorBranches", JSON.stringify(data.branches));
+        }
+      })
+      .catch(() => {}); // silent — falls back to the prop value
+  }, [token]);
+
   const isFiltered = filterBranch || filterDateFrom || filterDateTo;
-  const myBranches = directorBranches || [];
   const branchesParam = myBranches.join(",");
 
   // Build common query string for director branch + date filters
@@ -2763,6 +3100,7 @@ export default function CustomerEntryForm() {
         directorBranches={user.directorBranches}
         directorName={user.directorName || (isGM ? "GM" : "Director")}
         roleLabel={isGM ? "GM" : "Director"}
+        token={user.token}
       />
     );
  }
@@ -2817,7 +3155,13 @@ export default function CustomerEntryForm() {
         {/* Section 1 */}
         <SectionTitle icon="📋" title="Basic Details" />
         <div className="grid-2">
-          <TextInput label="Date" required type="date" value={form.entry_date} onChange={set("entry_date")} min={entryFloor} max={serverToday} />
+          <TextInput label="Date" required type="date" value={form.entry_date}
+            onChange={e => {
+              const val = e.target.value;
+              const clamped = val < entryFloor ? entryFloor : val > serverToday ? serverToday : val;
+              setForm(f => ({ ...f, entry_date: clamped }));
+            }}
+            min={entryFloor} max={serverToday} />
           <SelectInput label="Branch Name" required value={form.branch_name} onChange={set("branch_name")} options={branches} disabled />
           <TextInput label="Customer Name" required value={form.customer_name} onChange={set("customer_name")} placeholder="Full name" />
           <TextInput label="Phone Number" required type="tel" value={form.phone_number} onChange={set("phone_number")} placeholder="+91 XXXXX XXXXX" />
